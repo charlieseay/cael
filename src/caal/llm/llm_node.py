@@ -116,6 +116,11 @@ async def llm_node(
 
         # Discover tools from agent and MCP servers
         tools = await _discover_tools(agent, provider)
+        if tools:
+            tool_names = [t.get("function", {}).get("name", "?") for t in tools]
+            logger.info(f"Tools ({len(tools)}): {tool_names}")
+        else:
+            logger.warning("No tools discovered")
 
         # If tools available, loop non-streaming calls to support chaining
         # Model can call tool A → get result → call tool B → get result → text
@@ -301,11 +306,14 @@ def _build_messages_from_context(
 ) -> list[dict]:
     """Build messages with sliding window and context injection.
 
+    Dynamic context (tool cache, memory) is appended to the system prompt
+    rather than injected as separate system messages. This keeps a single
+    [SYSTEM_PROMPT] block in the rendered prompt, matching the format the
+    model was trained on.
+
     Message order:
-    1. System prompt (always first, never trimmed)
-    2. Tool data context (injected from cache)
-    3. Short-term memory context (awareness hint for tool chaining)
-    4. Chat history (sliding window applied)
+    1. System prompt + appended context (always first, never trimmed)
+    2. Chat history (sliding window applied)
 
     Args:
         chat_ctx: LiveKit chat context
@@ -363,22 +371,24 @@ def _build_messages_from_context(
     # Build final message list
     messages = []
 
-    # 1. System prompt always first
+    # 1. System prompt with dynamic context appended (single [SYSTEM_PROMPT] block)
     if system_prompt:
-        messages.append(system_prompt)
+        system_content = system_prompt["content"]
 
-    # 2. Inject tool data context
-    if tool_data_cache:
-        context = tool_data_cache.get_context_message()
-        if context:
-            messages.append({"role": "system", "content": context})
+        # Append tool data context
+        if tool_data_cache:
+            context = tool_data_cache.get_context_message()
+            if context:
+                system_content += f"\n\n{context}"
 
-    # 3. Inject short-term memory context (only after user has spoken)
-    has_user_message = any(m["role"] == "user" for m in chat_messages)
-    if short_term_memory and has_user_message:
-        memory_context = short_term_memory.get_context_message()
-        if memory_context:
-            messages.append({"role": "system", "content": memory_context})
+        # Append short-term memory context (only after user has spoken)
+        has_user_message = any(m["role"] == "user" for m in chat_messages)
+        if short_term_memory and has_user_message:
+            memory_context = short_term_memory.get_context_message()
+            if memory_context:
+                system_content += f"\n\n{memory_context}"
+
+        messages.append({"role": "system", "content": system_content})
 
     # 4. Apply sliding window to chat history
     # max_turns * 2 accounts for user + assistant pairs

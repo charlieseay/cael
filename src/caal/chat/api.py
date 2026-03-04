@@ -47,6 +47,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     text: str
     session_id: str | None = None
+    reuse_session: bool = False
     dry_run: bool = False  # Reserved for v2
     verbose: bool = False
 
@@ -218,13 +219,16 @@ async def _ensure_initialized() -> None:
             f"({runtime.get('ollama_model', '')})"
         )
 
-        # Load system prompt with date/time context (same as voice path)
+        # Load system prompt with date/time context
+        # CHAT_PROMPT selects a named prompt file (e.g. "headless" → prompt/en/headless.md)
         timezone_id = os.getenv("TIMEZONE", "America/Los_Angeles")
         timezone_display = os.getenv("TIMEZONE_DISPLAY", "Pacific Time")
+        chat_prompt_name = os.getenv("CHAT_PROMPT") or None
         _prompt = settings_module.load_prompt_with_context(
             timezone_id=timezone_id,
             timezone_display=timezone_display,
             language=runtime.get("language", "en"),
+            prompt_name=chat_prompt_name,
         )
 
         # Short-term memory (shared singleton, reload for cross-process sync)
@@ -348,8 +352,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
     assert _llm is not None
     assert _prompt is not None
 
+    # Resolve session: explicit id > reuse latest > create new
+    sid = req.session_id
+    if sid is None and req.reuse_session:
+        latest = _session_manager.get_latest_session()
+        if latest is not None:
+            sid = latest.session_id
+
     session = _session_manager.get_or_create(
-        session_id=req.session_id, max_turns=_max_turns
+        session_id=sid, max_turns=_max_turns
     )
 
     # Add user message to session history

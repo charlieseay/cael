@@ -113,6 +113,13 @@ class ChatSessionManager:
             return True
         return False
 
+    def get_latest_session(self) -> ChatSession | None:
+        """Return the most recently active non-expired session, or None."""
+        active = [s for s in self._sessions.values() if not s.is_expired]
+        if not active:
+            return None
+        return max(active, key=lambda s: s.last_activity)
+
     def list_sessions(self) -> list[dict]:
         """List active sessions with metadata."""
         return [

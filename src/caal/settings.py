@@ -428,6 +428,7 @@ def load_prompt_with_context(
     timezone_id: str = "America/Los_Angeles",
     timezone_display: str = "Pacific Time",
     language: str = "en",
+    prompt_name: str | None = None,
 ) -> str:
     """Load prompt and populate with date/time context.
 
@@ -447,7 +448,7 @@ def load_prompt_with_context(
         format_time_speech_friendly,
     )
 
-    template = load_prompt_content(language=language)
+    template = load_prompt_content(prompt_name=prompt_name, language=language)
 
     now = datetime.now(ZoneInfo(timezone_id))
 

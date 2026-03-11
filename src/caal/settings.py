@@ -417,7 +417,7 @@ def save_greetings(language: str, content: str) -> None:
     greetings_path = PROMPT_DIR / language / "greetings.txt"
     try:
         greetings_path.parent.mkdir(parents=True, exist_ok=True)
-        greetings_path.write_text(content)
+        greetings_path.write_text(content.rstrip("\n") + "\n")
         logger.info(f"Saved greetings to {greetings_path}")
     except Exception as e:
         logger.error(f"Failed to save greetings: {e}")

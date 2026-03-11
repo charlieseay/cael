@@ -696,17 +696,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         agent=assistant,
     )
 
-    # Send initial greeting with timeout to prevent hanging on unresponsive LLM
-    try:
-        await asyncio.wait_for(
-            session.generate_reply(
-                instructions="Greet the user briefly and let them know you're ready to help."
-            ),
-            timeout=30.0,
-        )
-    except asyncio.TimeoutError:
-        logger.error("Initial greeting timed out (30s) - LLM may be unresponsive")
-        # Continue anyway - user can still speak
+    # Say a canned greeting using agent name — avoids LLM call that could trigger tools
+    agent_name = settings_module.get_setting("agent_name", "Cal")
+    await session.say(f"Hello! I'm {agent_name}, your voice assistant. How can I help you?")
 
     logger.info("Agent ready - listening for speech...")
 

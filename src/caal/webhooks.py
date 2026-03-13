@@ -584,8 +584,14 @@ PIPER_VOICES = [
     "speaches-ai/piper-es_MX-ald-medium",
     # Russian
     "speaches-ai/piper-ru_RU-irina-medium",
-    # Other
+    # Italian
+    "speaches-ai/piper-it_IT-paola-medium",
     "speaches-ai/piper-it_IT-riccardo-x_low",
+    # Danish
+    "speaches-ai/piper-da_DK-talesyntese-medium",
+    # Romanian
+    "speaches-ai/piper-ro_RO-mihai-medium",
+    # Other
     "speaches-ai/piper-pl_PL-darkman-medium",
     "speaches-ai/piper-pt_BR-faber-medium",
     "speaches-ai/piper-sk_SK-lili-medium",

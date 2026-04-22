@@ -13,9 +13,29 @@ export interface SetupData {
   // STT Provider
   stt_provider: 'speaches' | 'groq';
   // LLM Provider
-  llm_provider: 'ollama' | 'groq' | 'openai_compatible' | 'openrouter';
+  llm_provider:
+    | 'claude_cli'
+    | 'anthropic'
+    | 'gemini_cli'
+    | 'google'
+    | 'ollama'
+    | 'groq'
+    | 'openai_compatible'
+    | 'openrouter';
+  // Claude CLI
+  claude_cli_model: string;
+  // Anthropic API
+  anthropic_api_key: string;
+  anthropic_model: string;
+  // Gemini CLI
+  gemini_cli_model: string;
+  // Google AI API
+  google_api_key: string;
+  google_model: string;
+  // Ollama
   ollama_host: string;
   ollama_model: string;
+  // Groq
   groq_api_key: string;
   groq_model: string;
   // OpenAI-compatible
@@ -44,7 +64,13 @@ interface SetupWizardProps {
 
 const INITIAL_DATA: SetupData = {
   stt_provider: 'speaches',
-  llm_provider: 'ollama',
+  llm_provider: 'claude_cli',
+  claude_cli_model: 'claude-haiku-4-5',
+  anthropic_api_key: '',
+  anthropic_model: 'claude-haiku-4-5',
+  gemini_cli_model: 'gemini-2.0-flash',
+  google_api_key: '',
+  google_model: 'gemini-2.0-flash',
   ollama_host: 'http://host.docker.internal:11434',
   ollama_model: '',
   groq_api_key: '',
@@ -181,14 +207,22 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     // Step 2: LLM provider
     if (step === 2) {
       switch (data.llm_provider) {
+        case 'claude_cli':
+          return !!data.claude_cli_model;
+        case 'anthropic':
+          return !!(data.anthropic_api_key && data.anthropic_model);
+        case 'gemini_cli':
+          return !!data.gemini_cli_model;
+        case 'google':
+          return !!(data.google_api_key && data.google_model);
         case 'ollama':
-          return data.ollama_host && data.ollama_model;
+          return !!(data.ollama_host && data.ollama_model);
         case 'groq':
-          return data.groq_api_key && data.groq_model;
+          return !!(data.groq_api_key && data.groq_model);
         case 'openai_compatible':
-          return data.openai_base_url && data.openai_model;
+          return !!(data.openai_base_url && data.openai_model);
         case 'openrouter':
-          return data.openrouter_api_key && data.openrouter_model;
+          return !!(data.openrouter_api_key && data.openrouter_model);
         default:
           return false;
       }

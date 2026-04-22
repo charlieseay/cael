@@ -32,9 +32,29 @@ interface Settings {
   // STT Provider
   stt_provider: 'speaches' | 'groq';
   // LLM Providers
-  llm_provider: 'ollama' | 'groq' | 'openai_compatible' | 'openrouter';
+  llm_provider:
+    | 'claude_cli'
+    | 'anthropic'
+    | 'gemini_cli'
+    | 'google'
+    | 'ollama'
+    | 'groq'
+    | 'openai_compatible'
+    | 'openrouter';
+  // Claude CLI
+  claude_cli_model: string;
+  // Anthropic API
+  anthropic_api_key: string;
+  anthropic_model: string;
+  // Gemini CLI
+  gemini_cli_model: string;
+  // Google AI API
+  google_api_key: string;
+  google_model: string;
+  // Ollama
   ollama_host: string;
   ollama_model: string;
+  // Groq
   groq_api_key: string;
   groq_model: string;
   // OpenAI-compatible
@@ -86,7 +106,13 @@ const DEFAULT_SETTINGS: Settings = {
   prompt: 'default',
   theme: 'midnight',
   stt_provider: 'speaches',
-  llm_provider: 'ollama',
+  llm_provider: 'claude_cli',
+  claude_cli_model: 'claude-haiku-4-5',
+  anthropic_api_key: '',
+  anthropic_model: 'claude-haiku-4-5',
+  gemini_cli_model: 'gemini-2.0-flash',
+  google_api_key: '',
+  google_model: 'gemini-2.0-flash',
   ollama_host: 'http://host.docker.internal:11434',
   ollama_model: '',
   groq_api_key: '',
@@ -1144,60 +1170,255 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   const renderAiProviderTab = () => (
     <div className="space-y-6">
-      {/* Provider selector */}
+      {/* Provider selector — grouped */}
       <div className="space-y-3">
-        <div
-          className="flex flex-wrap gap-2 rounded-xl p-1"
-          style={{ background: 'rgb(from var(--surface-2) r g b / 0.5)' }}
-        >
-          <button
-            onClick={() =>
-              setSettings({
-                ...settings,
-                llm_provider: 'ollama',
-              } as Settings)
-            }
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              settings.llm_provider === 'ollama'
-                ? 'bg-background text-foreground shadow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Ollama
-          </button>
-          <button
-            onClick={() => setSettings({ ...settings, llm_provider: 'groq' } as Settings)}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              settings.llm_provider === 'groq'
-                ? 'bg-background text-foreground shadow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Groq
-          </button>
-          <button
-            onClick={() =>
-              setSettings({ ...settings, llm_provider: 'openai_compatible' } as Settings)
-            }
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              settings.llm_provider === 'openai_compatible'
-                ? 'bg-background text-foreground shadow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            OpenAI Compatible
-          </button>
-          <button
-            onClick={() => setSettings({ ...settings, llm_provider: 'openrouter' } as Settings)}
-            className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-              settings.llm_provider === 'openrouter'
-                ? 'bg-background text-foreground shadow'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            OpenRouter
-          </button>
+        {/* Subscription group */}
+        <div>
+          <p className="text-muted-foreground mb-1.5 text-[11px] font-semibold uppercase tracking-wider">
+            Use your subscription
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { id: 'claude_cli', name: 'Claude CLI', badge: 'FREE', badgeColor: 'bg-emerald-500/15 text-emerald-400' },
+                { id: 'gemini_cli', name: 'Gemini CLI', badge: 'FREE', badgeColor: 'bg-emerald-500/15 text-emerald-400' },
+              ] as const
+            ).map(({ id, name, badge, badgeColor }) => (
+              <button
+                key={id}
+                onClick={() => setSettings({ ...settings, llm_provider: id } as Settings)}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                  settings.llm_provider === id
+                    ? 'border-primary bg-primary/8 shadow-sm'
+                    : 'border-input hover:border-muted-foreground/60'
+                }`}
+              >
+                {name}
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeColor}`}>{badge}</span>
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Cloud API group */}
+        <div>
+          <p className="text-muted-foreground mb-1.5 text-[11px] font-semibold uppercase tracking-wider">
+            Cloud API
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { id: 'anthropic', name: 'Anthropic' },
+                { id: 'google', name: 'Google AI' },
+                { id: 'groq', name: 'Groq' },
+                { id: 'openrouter', name: 'OpenRouter' },
+              ] as const
+            ).map(({ id, name }) => (
+              <button
+                key={id}
+                onClick={() => setSettings({ ...settings, llm_provider: id } as Settings)}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                  settings.llm_provider === id
+                    ? 'border-primary bg-primary/8 shadow-sm'
+                    : 'border-input hover:border-muted-foreground/60'
+                }`}
+              >
+                {name}
+                <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-400">API KEY</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Local group */}
+        <div>
+          <p className="text-muted-foreground mb-1.5 text-[11px] font-semibold uppercase tracking-wider">
+            Local / Self-hosted
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { id: 'ollama', name: 'Ollama' },
+                { id: 'openai_compatible', name: 'OpenAI Compatible' },
+              ] as const
+            ).map(({ id, name }) => (
+              <button
+                key={id}
+                onClick={() => setSettings({ ...settings, llm_provider: id } as Settings)}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-sm font-medium transition-all ${
+                  settings.llm_provider === id
+                    ? 'border-primary bg-primary/8 shadow-sm'
+                    : 'border-input hover:border-muted-foreground/60'
+                }`}
+              >
+                {name}
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400">LOCAL</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Claude CLI Settings */}
+        {settings.llm_provider === 'claude_cli' && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.claudeCliModel')}</label>
+              <select
+                value={settings.claude_cli_model}
+                onChange={(e) => setSettings({ ...settings, claude_cli_model: e.target.value })}
+                className="select-field text-foreground w-full px-4 py-3 text-sm"
+              >
+                <option value="claude-haiku-4-5">Claude Haiku — fast, efficient</option>
+                <option value="claude-sonnet-4-5">Claude Sonnet — balanced</option>
+                <option value="claude-opus-4-5">Claude Opus — most capable</option>
+              </select>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Requires the Claude Code CLI. Install from{' '}
+              <a href="https://claude.ai/code" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                claude.ai/code
+              </a>
+            </p>
+          </div>
+        )}
+
+        {/* Gemini CLI Settings */}
+        {settings.llm_provider === 'gemini_cli' && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.geminiCliModel')}</label>
+              <select
+                value={settings.gemini_cli_model}
+                onChange={(e) => setSettings({ ...settings, gemini_cli_model: e.target.value })}
+                className="select-field text-foreground w-full px-4 py-3 text-sm"
+              >
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash — fast</option>
+                <option value="gemini-2.0-flash-thinking-exp">Gemini 2.0 Flash Thinking — reasoning</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro — large context</option>
+              </select>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Requires the Gemini CLI. Install from{' '}
+              <a href="https://ai.google.dev/gemini-api/docs/gemini-cli" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                ai.google.dev
+              </a>
+            </p>
+          </div>
+        )}
+
+        {/* Anthropic API Settings */}
+        {settings.llm_provider === 'anthropic' && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.anthropicApiKey')}</label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={settings.anthropic_api_key}
+                  onChange={(e) => setSettings({ ...settings, anthropic_api_key: e.target.value })}
+                  placeholder="sk-ant-..."
+                  className="input-field text-foreground flex-1 px-4 py-3 text-sm"
+                />
+                <button
+                  onClick={async () => {
+                    if (!settings.anthropic_api_key) return;
+                    try {
+                      const res = await fetch('/api/setup/test-anthropic', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: settings.anthropic_api_key }),
+                      });
+                      const result = await res.json();
+                      if (!result.success) throw new Error(result.error);
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  }}
+                  disabled={!settings.anthropic_api_key}
+                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                  style={{ background: 'rgb(from var(--surface-2) r g b / 0.5)' }}
+                >
+                  {tCommon('test')}
+                </button>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                {t('providers.getApiKeyAt')}{' '}
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  console.anthropic.com
+                </a>
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.anthropicModel')}</label>
+              <select
+                value={settings.anthropic_model}
+                onChange={(e) => setSettings({ ...settings, anthropic_model: e.target.value })}
+                className="select-field text-foreground w-full px-4 py-3 text-sm"
+              >
+                <option value="claude-haiku-4-5">Claude Haiku — fast, efficient</option>
+                <option value="claude-sonnet-4-5">Claude Sonnet — balanced</option>
+                <option value="claude-opus-4-5">Claude Opus — most capable</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Google AI API Settings */}
+        {settings.llm_provider === 'google' && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.googleApiKey')}</label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={settings.google_api_key}
+                  onChange={(e) => setSettings({ ...settings, google_api_key: e.target.value })}
+                  placeholder="AIza..."
+                  className="input-field text-foreground flex-1 px-4 py-3 text-sm"
+                />
+                <button
+                  onClick={async () => {
+                    if (!settings.google_api_key) return;
+                    try {
+                      const res = await fetch('/api/setup/test-google', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: settings.google_api_key }),
+                      });
+                      const result = await res.json();
+                      if (!result.success) throw new Error(result.error);
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  }}
+                  disabled={!settings.google_api_key}
+                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+                  style={{ background: 'rgb(from var(--surface-2) r g b / 0.5)' }}
+                >
+                  {tCommon('test')}
+                </button>
+              </div>
+              <p className="text-muted-foreground text-xs">
+                {t('providers.getApiKeyAt')}{' '}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  aistudio.google.com
+                </a>
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t('providers.googleModel')}</label>
+              <select
+                value={settings.google_model}
+                onChange={(e) => setSettings({ ...settings, google_model: e.target.value })}
+                className="select-field text-foreground w-full px-4 py-3 text-sm"
+              >
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash — fast</option>
+                <option value="gemini-2.0-flash-thinking-exp">Gemini 2.0 Flash Thinking — reasoning</option>
+                <option value="gemini-1.5-pro">Gemini 1.5 Pro — large context</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Ollama Settings */}
         {settings.llm_provider === 'ollama' && (

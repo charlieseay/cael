@@ -23,6 +23,7 @@ import logging
 import os
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .. import CAALLLM
@@ -472,6 +473,53 @@ async def delete_session(session_id: str) -> DeleteResponse:
             status_code=404, detail=f"Session not found: {session_id}"
         )
     return DeleteResponse(status="deleted", session_id=session_id)
+
+
+@router.post("/voice", response_class=Response)
+async def chat_voice(req: ChatRequest) -> Response:
+    """Text in → WAV audio out. Designed for Siri Shortcuts and PWA clients.
+
+    Same LLM pipeline as the voice path. Response is synthesized via Kokoro
+    (or Speaches fallback) and returned as audio/wav.
+
+    Session ID is returned in the X-Session-Id response header so clients
+    can maintain conversation continuity across turns.
+
+    Example Siri Shortcut flow:
+        POST /api/chat/voice {"text": "what's pending?", "session_id": "iphone"}
+        → audio/wav bytes → play on device
+
+    Args:
+        req: ChatRequest (text, optional session_id, optional reuse_session)
+
+    Returns:
+        WAV audio bytes with headers:
+            X-Session-Id: session UUID
+            X-Response-Text: plain-text LLM response (for display/logging)
+    """
+    from ..tts.synthesizer import synthesize
+
+    # Run through LLM pipeline (same as /api/chat)
+    chat_response = await chat(req)
+
+    # Synthesize response text to audio
+    try:
+        audio_bytes = await synthesize(chat_response.response)
+    except Exception as e:
+        logger.error(f"TTS synthesis failed for voice endpoint: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"TTS unavailable: {e}",
+        )
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/wav",
+        headers={
+            "X-Session-Id": chat_response.session_id,
+            "X-Response-Text": chat_response.response[:500],  # truncated for header safety
+        },
+    )
 
 
 @router.post("/reload", response_model=ReloadResponse)

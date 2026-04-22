@@ -2001,6 +2001,62 @@ async def prewarm() -> PrewarmResponse:
 
 
 # =============================================================================
+# Assistant Profile & Avatar
+# =============================================================================
+
+import base64
+from fastapi.responses import FileResponse
+
+class AssistantProfileRequest(BaseModel):
+    name: str | None = None
+    avatar_b64: str | None = None
+    avatar_ext: str | None = None  # "jpg", "jpeg", "png", or "webp"
+
+
+class AssistantProfileResponse(BaseModel):
+    name: str
+    avatar_url: str | None
+
+
+@app.get("/assistant/profile", response_model=AssistantProfileResponse)
+async def get_assistant_profile() -> AssistantProfileResponse:
+    s = settings_module.load_settings()
+    name = s.get("agent_name", "Sonique")
+    filename = s.get("assistant_avatar_filename", "")
+    avatar_url = "/assistant/avatar" if filename and (settings_module.AVATAR_DIR / filename).exists() else None
+    return AssistantProfileResponse(name=name, avatar_url=avatar_url)
+
+
+@app.put("/assistant/profile", response_model=AssistantProfileResponse)
+async def update_assistant_profile(req: AssistantProfileRequest) -> AssistantProfileResponse:
+    updates: dict = {}
+    if req.name is not None:
+        updates["agent_name"] = req.name
+    if req.avatar_b64 and req.avatar_ext:
+        ext = req.avatar_ext.lower().lstrip(".")
+        if ext not in ("jpg", "jpeg", "png", "webp"):
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        settings_module.AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+        filename = f"avatar.{ext}"
+        (settings_module.AVATAR_DIR / filename).write_bytes(base64.b64decode(req.avatar_b64))
+        updates["assistant_avatar_filename"] = filename
+    if updates:
+        settings_module.save_settings(updates)
+    return await get_assistant_profile()
+
+
+@app.get("/assistant/avatar")
+async def get_assistant_avatar():
+    filename = settings_module.load_settings().get("assistant_avatar_filename", "")
+    if not filename:
+        raise HTTPException(status_code=404, detail="No avatar set")
+    path = settings_module.AVATAR_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Avatar file not found")
+    return FileResponse(path)
+
+
+# =============================================================================
 # Chat API
 # =============================================================================
 

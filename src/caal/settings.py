@@ -58,6 +58,7 @@ def validate_url(url: str) -> tuple[bool, str]:
 _SCRIPT_DIR = Path(__file__).parent.parent.parent  # src/caal -> project root
 SETTINGS_PATH = Path(os.getenv("CAAL_SETTINGS_PATH", _SCRIPT_DIR / "settings.json"))
 PROMPT_DIR = Path(os.getenv("CAAL_PROMPT_DIR", _SCRIPT_DIR / "prompt"))
+AVATAR_DIR = Path(os.getenv("CAAL_AVATAR_DIR", _SCRIPT_DIR / "avatars"))
 
 DEFAULT_SETTINGS = {
     # First-launch flag
@@ -121,6 +122,9 @@ DEFAULT_SETTINGS = {
     # Google AI API settings (API key required)
     "google_api_key": "",
     "google_model": "gemini-2.0-flash",
+    # Assistant identity
+    "assistant_avatar_filename": "",      # filename under AVATAR_DIR, empty = not set
+    "client_connection_url": "",          # URL external clients (iOS/macOS) use to reach this server
 }
 
 # Per-language Piper TTS voice mapping

@@ -34,7 +34,11 @@ import logging
 import os
 from typing import Any
 
+from .anthropic_provider import AnthropicProvider
 from .base import LLMProvider, LLMResponse, ToolCall
+from .claude_cli_provider import ClaudeCLIProvider
+from .gemini_cli_provider import GeminiCLIProvider
+from .google_provider import GoogleProvider
 from .groq_provider import GroqProvider
 from .ollama_provider import OllamaProvider
 from .openai_compatible_provider import OpenAICompatibleProvider
@@ -48,6 +52,10 @@ __all__ = [
     "GroqProvider",
     "OpenAICompatibleProvider",
     "OpenRouterProvider",
+    "ClaudeCLIProvider",
+    "AnthropicProvider",
+    "GeminiCLIProvider",
+    "GoogleProvider",
     "create_provider",
 ]
 
@@ -94,10 +102,19 @@ def create_provider(
         return OpenAICompatibleProvider(**kwargs)
     elif provider_name == "openrouter":
         return OpenRouterProvider(**kwargs)
+    elif provider_name == "claude_cli":
+        return ClaudeCLIProvider(**kwargs)
+    elif provider_name == "anthropic":
+        return AnthropicProvider(**kwargs)
+    elif provider_name == "gemini_cli":
+        return GeminiCLIProvider(**kwargs)
+    elif provider_name == "google":
+        return GoogleProvider(**kwargs)
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider_name}. "
-            f"Supported providers: ollama, groq, openai_compatible, openrouter"
+            f"Supported providers: ollama, groq, openai_compatible, openrouter, "
+            f"claude_cli, anthropic, gemini_cli, google"
         )
 
 
@@ -156,7 +173,6 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
             temperature=settings.get("temperature", 0.7),
         )
     elif provider_name == "openrouter":
-        # API key from settings, fallback to environment variable
         api_key = settings.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ValueError(
@@ -167,6 +183,30 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
             model=settings.get("openrouter_model", "openai/gpt-4"),
             api_key=api_key,
             temperature=settings.get("temperature", 0.7),
+        )
+    elif provider_name == "claude_cli":
+        return ClaudeCLIProvider(
+            model=settings.get("claude_cli_model", "claude-haiku-4-5"),
+            temperature=settings.get("temperature", 0.15),
+        )
+    elif provider_name == "anthropic":
+        api_key = settings.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
+        return AnthropicProvider(
+            model=settings.get("anthropic_model", "claude-haiku-4-5"),
+            api_key=api_key,
+            temperature=settings.get("temperature", 0.15),
+        )
+    elif provider_name == "gemini_cli":
+        return GeminiCLIProvider(
+            model=settings.get("gemini_cli_model", "gemini-2.0-flash"),
+            temperature=settings.get("temperature", 0.15),
+        )
+    elif provider_name == "google":
+        api_key = settings.get("google_api_key") or os.environ.get("GOOGLE_API_KEY")
+        return GoogleProvider(
+            model=settings.get("google_model", "gemini-2.0-flash"),
+            api_key=api_key,
+            temperature=settings.get("temperature", 0.15),
         )
     else:
         raise ValueError(

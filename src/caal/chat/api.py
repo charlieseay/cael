@@ -180,6 +180,32 @@ def _get_runtime_settings() -> dict:
             user_settings.get("openrouter_model")
             or os.getenv("OPENROUTER_MODEL", "openai/gpt-4")
         ),
+        # Claude CLI (subscription-native)
+        "claude_cli_model": (
+            user_settings.get("claude_cli_model")
+            or os.getenv("CLAUDE_CLI_MODEL", "claude-haiku-4-5")
+        ),
+        # Anthropic API
+        "anthropic_api_key": (
+            settings.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY", "")
+        ),
+        "anthropic_model": (
+            user_settings.get("anthropic_model")
+            or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5")
+        ),
+        # Gemini CLI (subscription-native)
+        "gemini_cli_model": (
+            user_settings.get("gemini_cli_model")
+            or os.getenv("GEMINI_CLI_MODEL", "gemini-2.0-flash")
+        ),
+        # Google AI API
+        "google_api_key": (
+            settings.get("google_api_key") or os.getenv("GOOGLE_API_KEY", "")
+        ),
+        "google_model": (
+            user_settings.get("google_model")
+            or os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")
+        ),
         # Shared
         "max_turns": settings.get(
             "max_turns", int(os.getenv("OLLAMA_MAX_TURNS", "20"))

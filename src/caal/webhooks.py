@@ -885,6 +885,7 @@ class SetupCompleteRequest(BaseModel):
     """Request body for /setup/complete endpoint."""
 
     llm_provider: str  # "ollama" | "groq" | "openai_compatible" | "openrouter"
+                       # | "claude_cli" | "anthropic" | "gemini_cli" | "google"
     # STT provider (independent from LLM)
     stt_provider: str | None = None  # "speaches" | "groq"
     # Ollama settings
@@ -900,6 +901,16 @@ class SetupCompleteRequest(BaseModel):
     # OpenRouter settings
     openrouter_api_key: str | None = None
     openrouter_model: str | None = None
+    # Claude CLI settings (subscription-native)
+    claude_cli_model: str | None = None
+    # Anthropic API settings
+    anthropic_api_key: str | None = None
+    anthropic_model: str | None = None
+    # Gemini CLI settings (subscription-native)
+    gemini_cli_model: str | None = None
+    # Google AI API settings
+    google_api_key: str | None = None
+    google_model: str | None = None
     # TTS provider
     tts_provider: str = "kokoro"  # "kokoro" | "piper"
     tts_voice_kokoro: str | None = None
@@ -1020,6 +1031,22 @@ async def complete_setup(req: SetupCompleteRequest) -> SetupCompleteResponse:
             current["openrouter_api_key"] = req.openrouter_api_key
         if req.openrouter_model:
             current["openrouter_model"] = req.openrouter_model
+        # Claude CLI settings
+        if req.claude_cli_model:
+            current["claude_cli_model"] = req.claude_cli_model
+        # Anthropic API settings
+        if req.anthropic_api_key:
+            current["anthropic_api_key"] = req.anthropic_api_key
+        if req.anthropic_model:
+            current["anthropic_model"] = req.anthropic_model
+        # Gemini CLI settings
+        if req.gemini_cli_model:
+            current["gemini_cli_model"] = req.gemini_cli_model
+        # Google AI API settings
+        if req.google_api_key:
+            current["google_api_key"] = req.google_api_key
+        if req.google_model:
+            current["google_model"] = req.google_model
 
         # Home Assistant integration - only update if explicitly provided
         if req.hass_enabled is not None:
@@ -1373,6 +1400,137 @@ class N8nWorkflowDetailResponse(BaseModel):
     """Response body for /n8n-workflow/{id} endpoint."""
 
     workflow: dict  # Full workflow JSON
+
+
+class TestClaudeCLIRequest(BaseModel):
+    """Request body for /setup/test-claude-cli endpoint."""
+    model: str = "claude-haiku-4-5"
+
+
+class TestGeminiCLIRequest(BaseModel):
+    """Request body for /setup/test-gemini-cli endpoint."""
+    model: str = "gemini-2.0-flash"
+
+
+class TestAnthropicRequest(BaseModel):
+    """Request body for /setup/test-anthropic endpoint."""
+    api_key: str = ""
+
+
+class TestGoogleRequest(BaseModel):
+    """Request body for /setup/test-google endpoint."""
+    api_key: str = ""
+
+
+@app.post("/setup/test-claude-cli", response_model=TestConnectionResponse)
+async def test_claude_cli(req: TestClaudeCLIRequest) -> TestConnectionResponse:
+    """Test that the claude CLI is installed and authenticated."""
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        if proc.returncode == 0:
+            version = stdout.decode().strip()
+            return TestConnectionResponse(success=True, models=[req.model], error=version or None)
+        return TestConnectionResponse(success=False, error="claude CLI returned non-zero exit code")
+    except FileNotFoundError:
+        return TestConnectionResponse(
+            success=False,
+            error="claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
+        )
+    except asyncio.TimeoutError:
+        return TestConnectionResponse(success=False, error="claude CLI timed out")
+    except Exception as e:
+        return TestConnectionResponse(success=False, error=str(e))
+
+
+@app.post("/setup/test-gemini-cli", response_model=TestConnectionResponse)
+async def test_gemini_cli(req: TestGeminiCLIRequest) -> TestConnectionResponse:
+    """Test that the gemini CLI is installed and authenticated."""
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gemini", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        if proc.returncode == 0:
+            version = stdout.decode().strip()
+            return TestConnectionResponse(success=True, models=[req.model], error=version or None)
+        return TestConnectionResponse(success=False, error="gemini CLI returned non-zero exit code")
+    except FileNotFoundError:
+        return TestConnectionResponse(
+            success=False,
+            error="gemini CLI not found. Install and authenticate the Gemini CLI."
+        )
+    except asyncio.TimeoutError:
+        return TestConnectionResponse(success=False, error="gemini CLI timed out")
+    except Exception as e:
+        return TestConnectionResponse(success=False, error=str(e))
+
+
+@app.post("/setup/test-anthropic", response_model=TestConnectionResponse)
+async def test_anthropic(req: TestAnthropicRequest) -> TestConnectionResponse:
+    """Test Anthropic API key validity."""
+    api_key = req.api_key
+    if not api_key:
+        stored = settings_module.load_settings()
+        api_key = stored.get("anthropic_api_key", "")
+    if not api_key:
+        return TestConnectionResponse(success=False, error="No API key provided")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+                timeout=10.0,
+            )
+            if response.status_code == 401:
+                return TestConnectionResponse(success=False, error="Invalid API key")
+            response.raise_for_status()
+            data = response.json()
+            models = [m.get("id") for m in data.get("data", [])]
+            models = [m for m in models if m]
+            return TestConnectionResponse(success=True, models=models)
+    except Exception as e:
+        return TestConnectionResponse(success=False, error=str(e))
+
+
+@app.post("/setup/test-google", response_model=TestConnectionResponse)
+async def test_google(req: TestGoogleRequest) -> TestConnectionResponse:
+    """Test Google AI API key validity."""
+    api_key = req.api_key
+    if not api_key:
+        stored = settings_module.load_settings()
+        api_key = stored.get("google_api_key", "")
+    if not api_key:
+        return TestConnectionResponse(success=False, error="No API key provided")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": api_key},
+                timeout=10.0,
+            )
+            if response.status_code == 400:
+                return TestConnectionResponse(success=False, error="Invalid API key")
+            response.raise_for_status()
+            data = response.json()
+            models = [m.get("name", "").replace("models/", "") for m in data.get("models", [])]
+            models = [m for m in models if m]
+            return TestConnectionResponse(success=True, models=models[:10])
+    except Exception as e:
+        return TestConnectionResponse(success=False, error=str(e))
 
 
 @app.get("/n8n-workflows", response_model=N8nWorkflowsResponse)

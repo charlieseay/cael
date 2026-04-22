@@ -111,6 +111,16 @@ DEFAULT_SETTINGS = {
     # OpenRouter settings (cloud API)
     "openrouter_api_key": "",     # OpenRouter API key (required for openrouter provider)
     "openrouter_model": "",       # Model name (empty = use default)
+    # Claude CLI settings (subscription-native, no API key)
+    "claude_cli_model": "claude-haiku-4-5",  # haiku | sonnet | opus
+    # Anthropic API settings (API key required)
+    "anthropic_api_key": "",
+    "anthropic_model": "claude-haiku-4-5",
+    # Gemini CLI settings (subscription-native, no API key)
+    "gemini_cli_model": "gemini-2.0-flash",
+    # Google AI API settings (API key required)
+    "google_api_key": "",
+    "google_model": "gemini-2.0-flash",
 }
 
 # Per-language Piper TTS voice mapping

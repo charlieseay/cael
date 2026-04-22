@@ -20,6 +20,9 @@ const LIVEKIT_PUBLIC_URL = process.env.NEXT_PUBLIC_LIVEKIT_URL;
 // don't cache the results
 export const revalidate = 0;
 
+// Optional pre-shared key for iOS/external clients — set CAAL_API_KEY env var to enable
+const CAAL_API_KEY = process.env.CAAL_API_KEY;
+
 export async function POST(req: Request) {
   try {
     if (LIVEKIT_URL === undefined) {
@@ -32,9 +35,19 @@ export async function POST(req: Request) {
       throw new Error('LIVEKIT_API_SECRET is not defined');
     }
 
+    // API key check — only enforced when CAAL_API_KEY is set
+    if (CAAL_API_KEY) {
+      const provided = req.headers.get('x-api-key');
+      if (provided !== CAAL_API_KEY) {
+        return new NextResponse('Unauthorized', { status: 401 });
+      }
+    }
+
     // Parse agent configuration from request body
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const agentName: string = body?.room_config?.agents?.[0]?.agent_name;
+    // extended_session: true → 4-hour token TTL (for Siri/wake-word triggered sessions)
+    const extendedSession: boolean = body?.extended_session === true;
 
     // Generate participant token
     // Fixed room name - all devices share the same room/agent session
@@ -46,7 +59,8 @@ export async function POST(req: Request) {
     const participantToken = await createParticipantToken(
       { identity: participantIdentity, name: participantName },
       roomName,
-      agentName
+      agentName,
+      extendedSession,
     );
 
     // Determine the WebSocket URL for the client
@@ -89,11 +103,12 @@ export async function POST(req: Request) {
 function createParticipantToken(
   userInfo: AccessTokenOptions,
   roomName: string,
-  agentName?: string
+  agentName?: string,
+  extendedSession = false,
 ): Promise<string> {
   const at = new AccessToken(API_KEY, API_SECRET, {
     ...userInfo,
-    ttl: '15m',
+    ttl: extendedSession ? '4h' : '15m',
   });
   const grant: VideoGrant = {
     room: roomName,

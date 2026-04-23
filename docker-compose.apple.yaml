@@ -74,6 +74,10 @@ services:
     image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
     container_name: caal-speaches
     platform: linux/arm64
+    environment:
+      - 'PRELOAD_MODELS=["Systran/faster-whisper-small","speaches-ai/piper-en_US-ryan-high"]'
+      - STT_MODEL_TTL=-1
+      - TTS_MODEL_TTL=-1
     volumes:
       - speaches-cache:/home/ubuntu/.cache/huggingface
     networks:
@@ -84,7 +88,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      start_period: 120s
 
   # Downloads required Piper TTS model on first run, then exits
   speaches-init:
@@ -95,7 +99,7 @@ services:
       - speaches-cache:/home/ubuntu/.cache/huggingface
     networks:
       - caal-network
-    entrypoint: ["/bin/sh", "-c", "curl -sf http://speaches:8000/v1/models/Systran/faster-whisper-medium -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/Systran/faster-whisper-medium && curl -sf http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high && echo 'Models ready'"]
+    entrypoint: ["/bin/sh", "-c", "curl -sf http://speaches:8000/v1/models/Systran/faster-whisper-small -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/Systran/faster-whisper-small && curl -sf http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high && echo 'Models ready'"]
     depends_on:
       speaches:
         condition: service_healthy
@@ -126,7 +130,7 @@ services:
       # STT + Piper TTS via Speaches container (CPU faster-whisper)
       - SPEACHES_URL=http://speaches:8000
       - PIPER_URL=http://speaches:8000
-      - WHISPER_MODEL=Systran/faster-whisper-medium
+      - WHISPER_MODEL=Systran/faster-whisper-small
       # TTS Kokoro via mlx-audio on host (optional, for English)
       - KOKORO_URL=${MLX_AUDIO_URL:-http://host.docker.internal:8001}
       - TTS_MODEL=${TTS_MODEL:-prince-canuma/Kokoro-82M}

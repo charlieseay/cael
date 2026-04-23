@@ -82,8 +82,10 @@ class HADeviceCache:
                     # Extract domain from entity_id (e.g., "cover" from "cover.garage_door")
                     domain = entity_id.split(".")[0] if "." in entity_id else "unknown"
 
+                    # Use first name only (names field may have comma-separated aliases)
+                    primary_name = current_entity["names"].split(",")[0].strip()
                     device = HADevice(
-                        name=current_entity["names"],
+                        name=primary_name,
                         domain=domain,
                         state=current_entity.get("state", "unknown"),
                         area=current_entity.get("area"),
@@ -108,8 +110,9 @@ class HADeviceCache:
         if current_entity.get("names") and current_entity.get("entity_id"):
             entity_id = current_entity["entity_id"]
             domain = entity_id.split(".")[0] if "." in entity_id else "unknown"
+            primary_name = current_entity["names"].split(",")[0].strip()
             device = HADevice(
-                name=current_entity["names"],
+                name=primary_name,
                 domain=domain,
                 state=current_entity.get("state", "unknown"),
                 area=current_entity.get("area"),
@@ -121,17 +124,23 @@ class HADeviceCache:
         logger.debug(f"Parsed {len(self.devices)} devices from GetLiveContext")
 
     def find_device(self, target: str) -> HADevice | None:
-        """Find device by name (case-insensitive, with fuzzy matching).
+        """Find device by name or entity_id (case-insensitive, with fuzzy matching).
 
         Args:
-            target: Device name to search for
+            target: Device name or entity_id to search for
 
         Returns:
             HADevice if found, None otherwise
         """
         target_lower = target.lower()
 
-        # Exact match
+        # Entity ID match (e.g., "light.bedroom_light")
+        if "." in target_lower:
+            for device in self.devices.values():
+                if device.entity_id and device.entity_id.lower() == target_lower:
+                    return device
+
+        # Exact name match
         if target_lower in self.devices:
             return self.devices[target_lower]
 
@@ -287,7 +296,7 @@ def create_hass_tools(
             if not result.isError:
                 texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
                 if texts:
-                    device_cache.parse_live_context(" ".join(texts))
+                    device_cache.parse_live_context("\n".join(texts))
 
         except Exception as e:
             logger.warning(f"Failed to refresh device cache: {e}")
@@ -320,6 +329,16 @@ def create_hass_tools(
         # Look up device to get domain
         device = device_cache.find_device(target)
         domain = device.domain if device else None
+        if device:
+            logger.info(
+                f"hass: resolved '{target}' -> name='{device.name}', "
+                f"entity_id={device.entity_id}, domain={domain}"
+            )
+        else:
+            logger.warning(
+                f"hass: no cache match for '{target}' "
+                f"(cache has {len(device_cache.devices)} devices)"
+            )
 
         # Remap mismatched actions based on domain (e.g., set_volume on a light -> set_brightness)
         if domain:
@@ -336,8 +355,10 @@ def create_hass_tools(
             valid_actions = sorted(set(a for a, _ in INTENT_MAP.keys()) | {"status"})
             return f"Unknown action: {action}. Valid actions: {', '.join(valid_actions)}"
 
-        # Build arguments
-        args = {"name": target}
+        # Build arguments — use cached friendly name when available
+        # (HA intent matching requires the exact friendly name)
+        device_name = device.name if device else target
+        args = {"name": device_name}
 
         # Include domain if we found one (improves HA intent matching)
         if domain:
@@ -361,9 +382,19 @@ def create_hass_tools(
 
         # Apply prefix and call tool
         tool_name = _apply_prefix(intent_name)
+        logger.info(f"hass: calling {tool_name} with args={args}")
 
         try:
             result = await hass_server._client.call_tool(tool_name, args)
+
+            # If targeting failed and we had a domain constraint, retry without it
+            if result.isError and domain:
+                error_texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
+                error_msg = " ".join(error_texts)
+                if "cannot target" in error_msg.lower():
+                    logger.info(f"Retrying {tool_name} without domain constraint")
+                    args.pop("domain", None)
+                    result = await hass_server._client.call_tool(tool_name, args)
 
             # Check for errors
             if result.isError:
@@ -389,9 +420,9 @@ def create_hass_tools(
                 error_texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
                 return f"Error: {' '.join(error_texts)}"
 
-            # Extract content
+            # Extract content -- join with newlines to preserve entity block boundaries
             texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
-            full_context = " ".join(texts) if texts else "No devices found"
+            full_context = "\n".join(texts) if texts else "No devices found"
 
             # Update device cache while we have the data
             device_cache.parse_live_context(full_context)

@@ -540,41 +540,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     _session_ref = session
 
     # ==========================================================================
-    # Round-trip latency tracking
+    # Round-trip latency tracking (callbacks registered after assistant creation)
     # ==========================================================================
 
-    _assistant_ref: VoiceAssistant | None = None  # set after construction
     _transcription_time: float | None = None
-
-    @session.on("user_input_transcribed")
-    def on_user_input_transcribed(ev) -> None:
-        nonlocal _transcription_time
-        _transcription_time = time.perf_counter()
-        logger.debug(f"User said: {ev.transcript[:80]}...")
-
-    @session.on("agent_state_changed")
-    def on_agent_state_changed(ev) -> None:
-        nonlocal _transcription_time, _assistant_ref
-        if ev.new_state == "speaking" and _transcription_time is not None:
-            latency_ms = (time.perf_counter() - _transcription_time) * 1000
-
-            # Pull component breakdown from llm_node's LatencyTrace
-            trace = getattr(_assistant_ref, "_last_latency_trace", None) if _assistant_ref else None
-            if trace and trace.total_ms > 0:
-                tts_ms = latency_ms - trace.total_ms
-                logger.info(
-                    f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms "
-                    f"[llm_node={trace.total_ms:.0f} tts={tts_ms:.0f}] "
-                    f"({trace.summary()})"
-                )
-            else:
-                logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
-
-            _transcription_time = None
-
-        # Notify wake word STT of agent state for silence timer management
-        if isinstance(stt_instance, WakeWordGatedSTT):
-            stt_instance.set_agent_busy(ev.new_state in ("thinking", "speaking"))
 
     async def _publish_tool_status(
         tool_used: bool,
@@ -638,7 +607,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         hass_tool_callables=hass_tool_callables,
         short_term_memory=short_term_memory,
     )
-    _assistant_ref = assistant  # noqa: F841 — captured by latency callback closure
+    # Register latency callbacks now that assistant exists — closures capture
+    # `assistant` directly instead of an indirect _ref variable.
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev) -> None:
+        nonlocal _transcription_time
+        _transcription_time = time.perf_counter()
+        logger.debug(f"User said: {ev.transcript[:80]}...")
+
+    @session.on("agent_state_changed")
+    def on_agent_state_changed(ev) -> None:
+        nonlocal _transcription_time
+        if ev.new_state == "speaking" and _transcription_time is not None:
+            latency_ms = (time.perf_counter() - _transcription_time) * 1000
+
+            # Pull component breakdown from llm_node's LatencyTrace
+            trace = getattr(assistant, "_last_latency_trace", None)
+            if trace and trace.total_ms > 0:
+                tts_ms = latency_ms - trace.total_ms
+                logger.info(
+                    f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms "
+                    f"[llm_node={trace.total_ms:.0f} tts={tts_ms:.0f}] "
+                    f"({trace.summary()})"
+                )
+            else:
+                logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
+
+            _transcription_time = None
+
+        # Notify wake word STT of agent state for silence timer management
+        if isinstance(stt_instance, WakeWordGatedSTT):
+            stt_instance.set_agent_busy(ev.new_state in ("thinking", "speaking"))
 
     # Create event to wait for session close (BEFORE session.start to avoid race condition)
     close_event = asyncio.Event()

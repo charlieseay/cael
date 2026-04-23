@@ -5,7 +5,7 @@ Supports multiple LLM backends (Ollama, Groq) with unified tool calling.
 """
 
 from .caal_llm import CAALLLM
-from .llm_node import ToolDataCache, llm_node
+from .llm_node import LatencyTrace, ToolDataCache, llm_node
 
 # Backward compatibility aliases
 from .ollama_llm import OllamaLLM

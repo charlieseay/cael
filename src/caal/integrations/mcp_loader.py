@@ -165,10 +165,73 @@ class MCPInitError:
     error: str
 
 
+async def _init_single_mcp(
+    config: MCPServerConfig,
+) -> tuple[str, mcp.MCPServerHTTP | None, MCPInitError | None]:
+    """Initialize a single MCP server. Returns (name, server_or_None, error_or_None)."""
+    try:
+        headers = {}
+        if config.auth_token:
+            headers["Authorization"] = f"Bearer {config.auth_token}"
+
+        server = mcp.MCPServerHTTP(
+            url=config.url,
+            headers=headers if headers else None,
+            timeout=config.timeout,
+        )
+
+        # Set transport type if specified
+        # Newer LiveKit versions use transport_type param, older use private attr
+        if config.transport == "streamable_http":
+            server._use_streamable_http = True
+        elif config.transport == "sse":
+            server._use_streamable_http = False
+        # If transport not specified, let LiveKit auto-detect from URL
+
+        # Pre-flight connection test with httpx (reliable timeout)
+        # This prevents the MCP library from hanging on bad connections
+        async with httpx.AsyncClient(timeout=CONNECTION_TEST_TIMEOUT) as client:
+            try:
+                resp = await client.post(
+                    config.url,
+                    headers=headers if headers else None,
+                    json={"jsonrpc": "2.0", "method": "ping", "id": 1},
+                )
+                if resp.status_code == 401:
+                    raise httpx.HTTPStatusError(
+                        "Unauthorized - check your token",
+                        request=resp.request,
+                        response=resp,
+                    )
+                elif resp.status_code == 403:
+                    raise httpx.HTTPStatusError(
+                        "Forbidden - check your token permissions",
+                        request=resp.request,
+                        response=resp,
+                    )
+            except httpx.TimeoutException:
+                raise TimeoutError(f"Connection timed out after {CONNECTION_TEST_TIMEOUT}s")
+
+        # Initialize MCP server (connection already validated)
+        await server.initialize()
+        logger.info(f"Initialized MCP server: {config.name}")
+        return config.name, server, None
+
+    except TimeoutError:
+        error_msg = f"Connection timed out after {CONNECTION_TEST_TIMEOUT}s"
+        logger.error(f"Failed to initialize MCP server {config.name}: {error_msg}")
+        return config.name, None, MCPInitError(name=config.name, error=error_msg)
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Failed to initialize MCP server {config.name}: {error_msg}")
+        return config.name, None, MCPInitError(name=config.name, error=error_msg)
+
+
 async def initialize_mcp_servers(
     configs: list[MCPServerConfig],
 ) -> tuple[dict[str, mcp.MCPServerHTTP], list[MCPInitError]]:
-    """Initialize MCP servers from config list.
+    """Initialize MCP servers from config list (concurrently).
 
     Args:
         configs: List of MCPServerConfig objects
@@ -178,67 +241,19 @@ async def initialize_mcp_servers(
         - servers_dict maps server name to initialized MCPServerHTTP instance
         - errors_list contains MCPInitError for any servers that failed
     """
+    import asyncio
+
+    if not configs:
+        return {}, []
+
+    results = await asyncio.gather(*[_init_single_mcp(c) for c in configs])
+
     servers = {}
     errors = []
-
-    for config in configs:
-        try:
-            headers = {}
-            if config.auth_token:
-                headers["Authorization"] = f"Bearer {config.auth_token}"
-
-            server = mcp.MCPServerHTTP(
-                url=config.url,
-                headers=headers if headers else None,
-                timeout=config.timeout,
-            )
-
-            # Set transport type if specified
-            # Newer LiveKit versions use transport_type param, older use private attr
-            if config.transport == "streamable_http":
-                server._use_streamable_http = True
-            elif config.transport == "sse":
-                server._use_streamable_http = False
-            # If transport not specified, let LiveKit auto-detect from URL
-
-            # Pre-flight connection test with httpx (reliable timeout)
-            # This prevents the MCP library from hanging on bad connections
-            async with httpx.AsyncClient(timeout=CONNECTION_TEST_TIMEOUT) as client:
-                try:
-                    resp = await client.post(
-                        config.url,
-                        headers=headers if headers else None,
-                        json={"jsonrpc": "2.0", "method": "ping", "id": 1},
-                    )
-                    # 401/403 = auth issue, other 4xx/5xx = server issue
-                    if resp.status_code == 401:
-                        raise httpx.HTTPStatusError(
-                            "Unauthorized - check your token",
-                            request=resp.request,
-                            response=resp,
-                        )
-                    elif resp.status_code == 403:
-                        raise httpx.HTTPStatusError(
-                            "Forbidden - check your token permissions",
-                            request=resp.request,
-                            response=resp,
-                        )
-                except httpx.TimeoutException:
-                    raise TimeoutError(f"Connection timed out after {CONNECTION_TEST_TIMEOUT}s")
-
-            # Initialize MCP server (connection already validated)
-            await server.initialize()
-            servers[config.name] = server
-            logger.info(f"Initialized MCP server: {config.name}")
-
-        except TimeoutError:
-            error_msg = f"Connection timed out after {CONNECTION_TEST_TIMEOUT}s"
-            logger.error(f"Failed to initialize MCP server {config.name}: {error_msg}")
-            errors.append(MCPInitError(name=config.name, error=error_msg))
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Failed to initialize MCP server {config.name}: {error_msg}")
-            errors.append(MCPInitError(name=config.name, error=error_msg))
+    for name, server, error in results:
+        if server:
+            servers[name] = server
+        if error:
+            errors.append(error)
 
     return servers, errors

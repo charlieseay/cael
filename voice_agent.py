@@ -726,7 +726,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
 
 def preload_models():
-    """Preload STT and LLM models on startup.
+    """Preload STT and LLM models on startup (in parallel).
 
     Ensures models are ready before first user connection, avoiding
     delays on first request (especially important on HDDs).
@@ -735,6 +735,8 @@ def preload_models():
     Skips individual preloads when using cloud providers (Groq).
     Note: Kokoro (remsky/kokoro-fastapi) preloads its own models at startup.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     settings = settings_module.load_settings()
 
     # Skip all preloading if wizard not complete
@@ -746,11 +748,9 @@ def preload_models():
     llm_provider = settings.get("llm_provider", "ollama")
 
     logger.info("Preloading models...")
+    t0 = time.perf_counter()
 
-    # Download Whisper STT model (skip if using Groq cloud STT)
-    if stt_provider == "groq":
-        logger.info("  Skipping STT preload (using Groq)")
-    else:
+    def _preload_stt():
         speaches_url = os.getenv("SPEACHES_URL", "http://speaches:8000")
         whisper_model = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-medium")
         try:
@@ -765,16 +765,13 @@ def preload_models():
                     timeout=300
                 )
             if response.status_code == 200:
-                logger.info("  ✓ STT ready")
+                logger.info("  STT ready")
             else:
                 logger.warning(f"  STT model download returned {response.status_code}")
         except Exception as e:
             logger.warning(f"  Failed to preload STT model: {e}")
 
-    # Warm up Ollama LLM (skip if using any cloud LLM provider)
-    if llm_provider != "ollama":
-        logger.info(f"  Skipping LLM preload (using {llm_provider})")
-    else:
+    def _preload_llm():
         ollama_host = settings.get("ollama_host") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         ollama_model = settings.get("ollama_model") or os.getenv("OLLAMA_MODEL", "ministral-3:8b")
         ollama_num_ctx = settings.get("num_ctx", int(os.getenv("OLLAMA_NUM_CTX", "8192")))
@@ -792,11 +789,31 @@ def preload_models():
                 timeout=180
             )
             if response.status_code == 200:
-                logger.info("  ✓ LLM ready")
+                logger.info("  LLM ready")
             else:
                 logger.warning(f"  LLM warmup returned {response.status_code}")
         except Exception as e:
             logger.warning(f"  Failed to preload LLM: {e}")
+
+    # Run preloads in parallel (STT + LLM are independent services)
+    futures = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        if stt_provider == "groq":
+            logger.info("  Skipping STT preload (using Groq)")
+        else:
+            futures.append(pool.submit(_preload_stt))
+
+        if llm_provider != "ollama":
+            logger.info(f"  Skipping LLM preload (using {llm_provider})")
+        else:
+            futures.append(pool.submit(_preload_llm))
+
+        # Wait for all preloads to complete
+        for f in as_completed(futures):
+            f.result()  # Surfaces any exceptions
+
+    elapsed = (time.perf_counter() - t0) * 1000
+    logger.info(f"Model preload complete in {elapsed:.0f}ms")
 
 
 # =============================================================================

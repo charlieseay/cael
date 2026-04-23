@@ -37,7 +37,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["llm_node", "ToolDataCache"]
+__all__ = ["llm_node", "ToolDataCache", "LatencyTrace"]
+
+
+class LatencyTrace:
+    """Collects per-phase timing for a single llm_node() call."""
+
+    __slots__ = (
+        "_t0", "msg_build_ms", "tool_discovery_ms",
+        "llm_rounds", "tool_exec_rounds", "stream_ms", "total_ms",
+    )
+
+    def __init__(self) -> None:
+        self._t0 = time.perf_counter()
+        self.msg_build_ms: float = 0
+        self.tool_discovery_ms: float = 0
+        self.llm_rounds: list[float] = []       # ms per LLM chat() call
+        self.tool_exec_rounds: list[float] = []  # ms per tool-execution round
+        self.stream_ms: float = 0
+        self.total_ms: float = 0
+
+    def finish(self) -> None:
+        self.total_ms = (time.perf_counter() - self._t0) * 1000
+
+    def summary(self) -> str:
+        parts = [f"total={self.total_ms:.0f}ms"]
+        parts.append(f"msg_build={self.msg_build_ms:.0f}")
+        parts.append(f"tool_disc={self.tool_discovery_ms:.0f}")
+        if self.llm_rounds:
+            parts.append(f"llm={'+'.join(f'{r:.0f}' for r in self.llm_rounds)}")
+        if self.tool_exec_rounds:
+            parts.append(f"tool_exec={'+'.join(f'{r:.0f}' for r in self.tool_exec_rounds)}")
+        if self.stream_ms:
+            parts.append(f"stream={self.stream_ms:.0f}")
+        return " | ".join(parts)
 
 
 class ToolDataCache:
@@ -105,17 +138,23 @@ async def llm_node(
                 ):
                     yield chunk
     """
+    trace = LatencyTrace()
+
     try:
         # Build messages from chat context with sliding window
+        t = time.perf_counter()
         messages = _build_messages_from_context(
             chat_ctx,
             tool_data_cache=tool_data_cache,
             short_term_memory=short_term_memory,
             max_turns=max_turns,
         )
+        trace.msg_build_ms = (time.perf_counter() - t) * 1000
 
         # Discover tools from agent and MCP servers
+        t = time.perf_counter()
         tools = await _discover_tools(agent, provider)
+        trace.tool_discovery_ms = (time.perf_counter() - t) * 1000
         if not tools:
             logger.warning("No tools discovered")
 
@@ -128,9 +167,11 @@ async def llm_node(
 
         if tools:
             while tool_round < max_tool_rounds:
+                t_llm = time.perf_counter()
                 try:
                     response = await provider.chat(messages=messages, tools=tools)
                 except Exception as tool_err:
+                    trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
                     # Tool call generation failed (e.g., model garbled tool name)
                     err_msg = str(tool_err)
                     # Wrong tool name — model called a non-existent tool
@@ -153,11 +194,13 @@ async def llm_node(
                         logger.warning(
                             f"Malformed tool call, retrying: {err_msg}"
                         )
+                        t_llm = time.perf_counter()
                         try:
                             response = await provider.chat(
                                 messages=messages, tools=tools
                             )
                         except Exception:
+                            trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
                             logger.warning(
                                 "Retry failed, falling back to streaming"
                             )
@@ -171,12 +214,17 @@ async def llm_node(
                     else:
                         raise  # Re-raise non-tool errors
 
+                trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
+
                 if not response.tool_calls:
                     # Model is done with tools
                     if response.content:
                         # Don't clear tool status — keep indicator showing
                         # which tools were used for this response
                         _emit_usage(agent, provider)
+                        trace.finish()
+                        logger.info(f"LATENCY TRACE: {trace.summary()}")
+                        _store_trace(agent, trace)
                         yield strip_markdown_for_tts(response.content)
                         return
                     break  # No content either, fall through to streaming
@@ -200,6 +248,7 @@ async def llm_node(
                         agent._on_tool_status(True, all_tool_names, all_tool_params)
                     )
 
+                t_exec = time.perf_counter()
                 messages = await _execute_tool_calls(
                     agent,
                     messages,
@@ -209,6 +258,7 @@ async def llm_node(
                     tool_data_cache=tool_data_cache,
                     short_term_memory=short_term_memory,
                 )
+                trace.tool_exec_rounds.append((time.perf_counter() - t_exec) * 1000)
                 # Loop back — model sees tool results and decides: chain or respond
 
             if tool_round >= max_tool_rounds:
@@ -223,6 +273,7 @@ async def llm_node(
 
             asyncio.create_task(agent._on_tool_status(False, [], []))
 
+        t_stream = time.perf_counter()
         if tool_round > 0:
             # After tool execution — pass tools so Ollama can validate
             # tool_calls in message history
@@ -245,11 +296,17 @@ async def llm_node(
             # No tools or no tool calls — plain streaming
             async for chunk in provider.chat_stream(messages=messages):
                 yield strip_markdown_for_tts(chunk)
+        trace.stream_ms = (time.perf_counter() - t_stream) * 1000
 
         # Report token usage from final LLM call
         _emit_usage(agent, provider)
 
+        trace.finish()
+        logger.info(f"LATENCY TRACE: {trace.summary()}")
+        _store_trace(agent, trace)
+
     except Exception as e:
+        trace.finish()
         logger.error(f"Error in llm_node: {e}", exc_info=True)
         yield f"I encountered an error: {e}"
 
@@ -259,6 +316,11 @@ def _emit_usage(agent, provider) -> None:
     last_usage = getattr(provider, "_last_usage", None)
     if last_usage and hasattr(agent, "_on_usage") and agent._on_usage:
         agent._on_usage(last_usage)
+
+
+def _store_trace(agent, trace: LatencyTrace) -> None:
+    """Store the latest latency trace on the agent for external access."""
+    agent._last_latency_trace = trace
 
 
 def _strip_tool_messages(messages: list[dict]) -> list[dict]:

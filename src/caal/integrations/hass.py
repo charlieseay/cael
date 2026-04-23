@@ -357,7 +357,16 @@ def create_hass_tools(
 
         # Build arguments — use cached friendly name when available
         # (HA intent matching requires the exact friendly name)
-        device_name = device.name if device else target
+        if device:
+            device_name = device.name
+        elif "." in target and target.split(".")[0].isalpha():
+            # Target looks like an entity_id (e.g., "light.bedroom_light") but
+            # cache missed — convert to a plausible friendly name so HA intent
+            # matching has a chance instead of receiving a raw entity_id.
+            device_name = target.split(".", 1)[1].replace("_", " ").title()
+            logger.info(f"hass: entity_id fallback '{target}' -> '{device_name}'")
+        else:
+            device_name = target
         args = {"name": device_name}
 
         # Include area if available (critical for HA entity disambiguation)
@@ -391,14 +400,47 @@ def create_hass_tools(
         try:
             result = await hass_server._client.call_tool(tool_name, args)
 
-            # If targeting failed and we had a domain constraint, retry without it
-            if result.isError and domain:
+            # Progressive retry on targeting failures:
+            # 1. Drop domain constraint (broadens entity search)
+            # 2. Drop area constraint (removes location filter)
+            if result.isError:
                 error_texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
                 error_msg = " ".join(error_texts)
                 if "cannot target" in error_msg.lower():
-                    logger.info(f"Retrying {tool_name} without domain constraint")
-                    args.pop("domain", None)
-                    result = await hass_server._client.call_tool(tool_name, args)
+                    if "domain" in args:
+                        logger.info(f"Retry 1: {tool_name} without domain constraint")
+                        args.pop("domain", None)
+                        result = await hass_server._client.call_tool(tool_name, args)
+
+                    if result.isError and "area" in args:
+                        error_texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
+                        error_msg = " ".join(error_texts)
+                        if "cannot target" in error_msg.lower():
+                            logger.info(f"Retry 2: {tool_name} without area constraint")
+                            args.pop("area", None)
+                            result = await hass_server._client.call_tool(tool_name, args)
+
+                    # Last resort: force-refresh the device cache and rebuild
+                    # args with fresh friendly name + area. Handles the case
+                    # where the original call used a stale or empty cache.
+                    if result.isError:
+                        error_texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
+                        error_msg = " ".join(error_texts)
+                        if "cannot target" in error_msg.lower():
+                            device_cache.last_updated = 0.0  # force stale
+                            await _refresh_device_cache()
+                            fresh_device = device_cache.find_device(target)
+                            if fresh_device and fresh_device.name != args["name"]:
+                                logger.info(
+                                    f"Retry 3: fresh cache resolved "
+                                    f"'{target}' -> '{fresh_device.name}'"
+                                )
+                                args["name"] = fresh_device.name
+                                if fresh_device.area:
+                                    args["area"] = fresh_device.area
+                                result = await hass_server._client.call_tool(
+                                    tool_name, args
+                                )
 
             # Check for errors
             if result.isError:

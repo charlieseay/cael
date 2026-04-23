@@ -129,15 +129,43 @@ def _format_date_french(dt: datetime) -> str:
     return f"{day_name} {day_number} {month_name} {dt.year}"
 
 
+_HOUR_WORDS = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    11: "eleven", 12: "twelve",
+}
+_TENS_WORDS = {
+    1: "ten", 2: "twenty", 3: "thirty", 4: "forty", 5: "fifty",
+}
+_ONES_WORDS = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine",
+}
+
+
+def _minute_to_words(minute: int) -> str:
+    """Convert minutes 1-59 to spoken English words."""
+    if minute < 10:
+        return f"oh {_ONES_WORDS[minute]}"
+    tens, ones = divmod(minute, 10)
+    if ones == 0:
+        return _TENS_WORDS[tens]
+    return f"{_TENS_WORDS[tens]}-{_ONES_WORDS[ones]}"
+
+
 def format_time_speech_friendly(dt: datetime, language: str = "en") -> str:
     """Format a time in a speech-friendly way for TTS.
 
+    Returns fully spelled-out words so TTS reads correctly.
+
     Args:
         dt: Datetime to format
-        language: ISO 639-1 language code ("en" or "fr")
+        language: ISO 639-1 language code
 
     Examples:
-        English: 3:00 PM -> "3 PM", 3:30 PM -> "3:30 PM"
+        English: 9:08 AM -> "nine oh eight AM"
+                 3:30 PM -> "three thirty PM"
+                 3:00 PM -> "three PM"
         French: 15:00 -> "15 heures", 15:30 -> "15 heures 30"
     """
     if language == "fr":
@@ -155,27 +183,18 @@ def format_time_speech_friendly(dt: datetime, language: str = "en") -> str:
     hour = dt.hour
     minute = dt.minute
 
-    # Special cases for noon and midnight
     if hour == 12 and minute == 0:
         return "noon"
-    elif hour == 0 and minute == 0:
+    if hour == 0 and minute == 0:
         return "midnight"
 
-    # Convert to 12-hour format
-    hour_12 = hour % 12
-    if hour_12 == 0:
-        hour_12 = 12
-
-    # Determine AM/PM
+    hour_12 = hour % 12 or 12
     period = "AM" if hour < 12 else "PM"
+    hour_word = _HOUR_WORDS[hour_12]
 
-    # Format based on whether there are minutes
     if minute == 0:
-        # On the hour: "3 PM" instead of "3:00 PM"
-        return f"{hour_12} {period}"
-    else:
-        # With minutes: "3:30 PM"
-        return f"{hour_12}:{minute:02d} {period}"
+        return f"{hour_word} {period}"
+    return f"{hour_word} {_minute_to_words(minute)} {period}"
 
 
 def _format_time_french(dt: datetime) -> str:

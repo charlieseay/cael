@@ -509,6 +509,16 @@ def load_prompt_with_context(
     prompt = template.replace("{{CURRENT_DATE_CONTEXT}}", date_context)
     prompt = prompt.replace("{{TIMEZONE}}", timezone_display)
 
+    # Inject user profile if configured
+    settings = load_settings()
+    user_profile = settings.get("user_profile", {})
+    if user_profile:
+        lines = [f"- {k}: {v}" for k, v in user_profile.items()]
+        profile_block = "\n".join(lines)
+    else:
+        profile_block = "No user profile configured."
+    prompt = prompt.replace("{{USER_PROFILE}}", profile_block)
+
     return prompt
 
 

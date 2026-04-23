@@ -135,10 +135,14 @@ services:
       - KOKORO_URL=${MLX_AUDIO_URL:-http://host.docker.internal:8001}
       - TTS_MODEL=${TTS_MODEL:-prince-canuma/Kokoro-82M}
       - TTS_VOICE=${TTS_VOICE:-af_heart}
+      # LightRAG knowledge base (organic memory layer)
+      - LIGHTRAG_URL=http://host.docker.internal:8128
+      - VAULT_PATH=/vault
     volumes:
       - caal-memory:/app/data
       - caal-config:/app/config  # Runtime config (settings.json, mcp_servers.json)
       - ./prompt:/app/prompt
+      - "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet:/vault"
     networks:
       - caal-network
     depends_on:
@@ -147,6 +151,11 @@ services:
       speaches:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4G
 
   # ===========================================================================
   # Frontend - Next.js Web Interface

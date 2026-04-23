@@ -49,6 +49,7 @@ from livekit.plugins import openai, silero  # noqa: E402
 
 from caal import CAALLLM  # noqa: E402
 from caal.integrations import (  # noqa: E402
+    LightRAGTools,
     MemoryTools,
     WebSearchTools,
     create_hass_tools,
@@ -101,10 +102,12 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-small")
 KOKORO_URL = os.getenv("KOKORO_URL", "http://kokoro:8880")
 PIPER_URL = os.getenv("PIPER_URL", SPEACHES_URL)  # Separate URL for Piper TTS
 TTS_MODEL = os.getenv("TTS_MODEL", "kokoro")
-logger.info(f"[TTS Config] KOKORO_URL={KOKORO_URL}, PIPER_URL={PIPER_URL}, TTS_MODEL={TTS_MODEL}")
+TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
+logger.info(f"[TTS Config] KOKORO_URL={KOKORO_URL}, PIPER_URL={PIPER_URL}, TTS_MODEL={TTS_MODEL}, TTS_SPEED={TTS_SPEED}")
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "false").lower() == "true"
 TIMEZONE_ID = os.getenv("TIMEZONE", "America/Los_Angeles")
 TIMEZONE_DISPLAY = os.getenv("TIMEZONE_DISPLAY", "Pacific Time")
+LIGHTRAG_URL = os.getenv("LIGHTRAG_URL", "http://host.docker.internal:8128")
 
 # Import settings module for runtime-configurable values
 from caal import settings as settings_module  # noqa: E402
@@ -187,9 +190,13 @@ def get_runtime_settings() -> dict:
 
 def load_prompt(language: str = "en") -> str:
     """Load and populate prompt template with date context."""
+    # Prefer settings.json (set by SoniqueBar) over env var defaults
+    settings = settings_module.load_settings()
+    tz_id = settings.get("timezone_id") or TIMEZONE_ID
+    tz_display = settings.get("timezone_display") or TIMEZONE_DISPLAY
     return settings_module.load_prompt_with_context(
-        timezone_id=TIMEZONE_ID,
-        timezone_display=TIMEZONE_DISPLAY,
+        timezone_id=tz_id,
+        timezone_display=tz_display,
         language=language,
     )
 
@@ -202,7 +209,7 @@ def load_prompt(language: str = "en") -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(MemoryTools, WebSearchTools, Agent):
+class VoiceAssistant(LightRAGTools, MemoryTools, WebSearchTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(
@@ -499,19 +506,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     if tts_provider == "piper":
         piper_voice = runtime["tts_voice_piper"]
-        tts_instance = openai.TTS(
+        tts_instance = SyncOpenAITTS(
             base_url=f"{PIPER_URL}/v1",
-            api_key="not-needed",
             model=piper_voice,
             voice="default",  # Ignored by Piper but required by API
+            speed=TTS_SPEED,
         )
     else:
-        # Kokoro uses separate model and voice params
         # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess
         tts_instance = SyncOpenAITTS(
             base_url=f"{KOKORO_URL}/v1",
             model=TTS_MODEL,
             voice=runtime["tts_voice_kokoro"],
+            speed=TTS_SPEED,
         )
 
     # Create session with STT and TTS (both OpenAI-compatible)
@@ -769,7 +776,7 @@ def preload_models():
                     "model": ollama_model,
                     "prompt": "hi",
                     "stream": False,
-                    "keep_alive": -1,
+                    "keep_alive": int(os.getenv("OLLAMA_KEEP_ALIVE", "-1")),
                     "options": {"num_ctx": ollama_num_ctx}
                 },
                 timeout=180

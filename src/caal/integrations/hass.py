@@ -360,6 +360,10 @@ def create_hass_tools(
         device_name = device.name if device else target
         args = {"name": device_name}
 
+        # Include area if available (critical for HA entity disambiguation)
+        if device and device.area:
+            args["area"] = device.area
+
         # Include domain if we found one (improves HA intent matching)
         if domain:
             args["domain"] = [domain]

@@ -38,6 +38,7 @@ class HADevice:
     domain: str
     state: str
     area: str | None = None
+    entity_id: str | None = None
 
 
 @dataclass
@@ -86,6 +87,7 @@ class HADeviceCache:
                         domain=domain,
                         state=current_entity.get("state", "unknown"),
                         area=current_entity.get("area"),
+                        entity_id=entity_id,
                     )
                     # Store by lowercase name for case-insensitive lookup
                     self.devices[device.name.lower()] = device
@@ -111,6 +113,7 @@ class HADeviceCache:
                 domain=domain,
                 state=current_entity.get("state", "unknown"),
                 area=current_entity.get("area"),
+                entity_id=entity_id,
             )
             self.devices[device.name.lower()] = device
 

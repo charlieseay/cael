@@ -91,6 +91,8 @@ interface Settings {
   min_endpointing_delay: number;
   // Language
   language: string;
+  // Mobile app
+  client_connection_url: string;
 }
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error';
@@ -146,6 +148,8 @@ const DEFAULT_SETTINGS: Settings = {
   min_endpointing_delay: 0.5,
   // Language
   language: 'en',
+  // Mobile app
+  client_connection_url: '',
 };
 
 const DEFAULT_PROMPT = `# Voice Assistant
@@ -823,6 +827,39 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           onChange={(e) => setSettings({ ...settings, agent_name: e.target.value })}
           className="input-field text-foreground w-full px-4 py-3 text-sm"
         />
+      </div>
+
+      {/* Mobile App — QR onboarding */}
+      <div className="border-t pt-6">
+        <h3 className="mb-1 text-sm font-semibold">Mobile App</h3>
+        <p className="text-muted-foreground mb-4 text-xs">
+          Scan with Sonique on iOS to connect instantly.
+        </p>
+        <div className="mb-4 flex justify-center">
+          <div className="rounded-xl bg-white p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/api/assistant/qr"
+              alt="Sonique QR Code"
+              width={180}
+              height={180}
+              key={settings.client_connection_url}
+            />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Connection URL</label>
+          <input
+            type="text"
+            value={settings.client_connection_url}
+            onChange={(e) => setSettings({ ...settings, client_connection_url: e.target.value })}
+            placeholder="http://192.168.0.x:3000"
+            className="input-field text-foreground w-full px-4 py-3 text-sm"
+          />
+          <p className="text-muted-foreground text-xs">
+            The URL iOS uses to reach this server. Leave empty to use the current address.
+          </p>
+        </div>
       </div>
 
       {/* Wake Word Section */}

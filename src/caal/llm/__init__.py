@@ -23,6 +23,7 @@ __all__ = [
     "CAALLLM",
     "llm_node",
     "ToolDataCache",
+    "LatencyTrace",
     "LLMProvider",
     "OllamaProvider",
     "GroqProvider",

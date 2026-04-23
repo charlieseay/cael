@@ -14,6 +14,7 @@ After writing, /index/refresh is called on LightRAG to update the graph.
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,9 @@ import httpx
 from livekit.agents import function_tool
 
 logger = logging.getLogger(__name__)
+
+# Track last embedding query latency for external access
+_last_query_ms: float | None = None
 
 LIGHTRAG_URL = os.getenv("LIGHTRAG_URL", "http://host.docker.internal:8128")
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "/vault"))
@@ -37,12 +41,16 @@ async def _query(text: str) -> list[dict]:
     We skip it and let the main voice LLM (Claude) synthesize from the raw chunks.
     Returns a list of {source, chunk, similarity, content} dicts.
     """
+    global _last_query_ms
+    t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT) as client:
         resp = await client.post(
             f"{LIGHTRAG_URL}/query",
             json={"query": text, "top_k": _TOP_K, "synthesize": False},
         )
         resp.raise_for_status()
+        _last_query_ms = (time.perf_counter() - t0) * 1000
+        logger.info(f"LIGHTRAG QUERY: {_last_query_ms:.0f}ms (embedding lookup)")
         return resp.json().get("sources", [])
 
 

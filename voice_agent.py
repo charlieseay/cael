@@ -543,6 +543,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # Round-trip latency tracking
     # ==========================================================================
 
+    _assistant_ref: VoiceAssistant | None = None  # set after construction
     _transcription_time: float | None = None
 
     @session.on("user_input_transcribed")
@@ -553,10 +554,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     @session.on("agent_state_changed")
     def on_agent_state_changed(ev) -> None:
-        nonlocal _transcription_time
+        nonlocal _transcription_time, _assistant_ref
         if ev.new_state == "speaking" and _transcription_time is not None:
             latency_ms = (time.perf_counter() - _transcription_time) * 1000
-            logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
+
+            # Pull component breakdown from llm_node's LatencyTrace
+            trace = getattr(_assistant_ref, "_last_latency_trace", None) if _assistant_ref else None
+            if trace and trace.total_ms > 0:
+                tts_ms = latency_ms - trace.total_ms
+                logger.info(
+                    f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms "
+                    f"[llm_node={trace.total_ms:.0f} tts={tts_ms:.0f}] "
+                    f"({trace.summary()})"
+                )
+            else:
+                logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
+
             _transcription_time = None
 
         # Notify wake word STT of agent state for silence timer management
@@ -625,6 +638,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         hass_tool_callables=hass_tool_callables,
         short_term_memory=short_term_memory,
     )
+    _assistant_ref = assistant  # noqa: F841 — captured by latency callback closure
 
     # Create event to wait for session close (BEFORE session.start to avoid race condition)
     close_event = asyncio.Event()

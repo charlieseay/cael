@@ -144,7 +144,7 @@ services:
     container_name: caal-frontend
     platform: linux/arm64
     ports:
-      - "3000:3000"
+      - "3100:3000"
     environment:
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}

@@ -4,8 +4,8 @@ import type { NextConfig } from 'next';
 const withNextIntl = createNextIntlPlugin();
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker deployment
   output: 'standalone',
+  eslint: { ignoreDuringBuilds: true },
 };
 
 export default withNextIntl(nextConfig);

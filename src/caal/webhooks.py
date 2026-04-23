@@ -423,6 +423,32 @@ async def get_settings() -> SettingsResponse:
     )
 
 
+async def _ensure_piper_model(model_id: str) -> None:
+    """Ensure a Piper voice model is downloaded in the Speaches container.
+
+    Speaches POST /v1/models/{id} is idempotent — it's a fast no-op if the
+    model is already present, and downloads it otherwise. Called whenever
+    tts_voice_piper changes so the first TTS call after a voice switch
+    doesn't fail with a 404.
+    """
+    if not model_id or not model_id.startswith("speaches-ai/piper-"):
+        return
+    base = os.getenv("PIPER_URL") or os.getenv("SPEACHES_URL") or "http://speaches:8000"
+    url = f"{base.rstrip('/')}/v1/models/{model_id}"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Piper model install returned %s for %s: %s",
+                    resp.status_code, model_id, resp.text[:200],
+                )
+            else:
+                logger.info("Piper model ensured: %s", model_id)
+    except Exception as e:
+        logger.warning("Piper model install failed for %s: %s", model_id, e)
+
+
 @app.post("/settings", response_model=SettingsResponse)
 async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
     """Update settings.
@@ -462,6 +488,12 @@ async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
 
     # Save merged settings
     settings_module.save_settings(current)
+
+    # If Piper voice changed, make sure Speaches has the model downloaded.
+    # Done after save so the setting sticks even if the download hiccups.
+    new_voice = req.settings.get("tts_voice_piper")
+    if new_voice:
+        await _ensure_piper_model(new_voice)
 
     # Reload and return
     settings = settings_module.reload_settings()

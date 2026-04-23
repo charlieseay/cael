@@ -99,7 +99,25 @@ services:
       - speaches-cache:/home/ubuntu/.cache/huggingface
     networks:
       - caal-network
-    entrypoint: ["/bin/sh", "-c", "curl -sf http://speaches:8000/v1/models/Systran/faster-whisper-small -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/Systran/faster-whisper-small && curl -sf http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high -o /dev/null || curl -s -X POST http://speaches:8000/v1/models/speaches-ai/piper-en_US-ryan-high && echo 'Models ready'"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        BASE=http://speaches:8000
+        ensure() {
+          curl -sf "$BASE/v1/models/$1" -o /dev/null \
+            || curl -sf -X POST "$BASE/v1/models/$1" -o /dev/null \
+            && echo "  ✓ $1"
+        }
+        # STT
+        ensure "Systran/faster-whisper-small"
+        # Piper voices offered in SoniqueBar
+        ensure "speaches-ai/piper-en_US-ryan-high"
+        ensure "speaches-ai/piper-en_US-amy-medium"
+        ensure "speaches-ai/piper-en_GB-alan-medium"
+        ensure "speaches-ai/piper-en_US-libritts_r-medium"
+        echo "Models ready"
     depends_on:
       speaches:
         condition: service_healthy
@@ -138,6 +156,12 @@ services:
       # LightRAG knowledge base (organic memory layer)
       - LIGHTRAG_URL=http://host.docker.internal:8128
       - VAULT_PATH=/vault
+      # MCP Hub — lazy tool discovery/invocation
+      - MCP_PROXY_URL=http://host.docker.internal:3700
+      # Helmsman closed-loop dispatch
+      - DISPATCH_URL=http://host.docker.internal:5680/webhook/task-dispatch
+      - DISPATCH_SECRET=${DISPATCH_SECRET:-}
+      - HELMSMAN_DB_URL=http://host.docker.internal:5682
     volumes:
       - caal-memory:/app/data
       - caal-config:/app/config  # Runtime config (settings.json, mcp_servers.json)

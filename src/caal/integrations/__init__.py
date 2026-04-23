@@ -3,7 +3,9 @@ MCP integrations for voice assistant.
 """
 
 from .hass import create_hass_tools, detect_hass_tool_prefix
+from .helmsman_tool import HelmsmanTools
 from .lightrag_tool import LightRAGTools
+from .mcp_hub_tool import MCPHubTools
 from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config
 from .memory_tool import (
     MEMORY_SHORT_TOOL_DEF,
@@ -20,9 +22,11 @@ __all__ = [
     "execute_memory_short",
     "execute_n8n_workflow",
     "execute_web_search",
+    "HelmsmanTools",
     "initialize_mcp_servers",
     "LightRAGTools",
     "load_mcp_config",
+    "MCPHubTools",
     "MCPServerConfig",
     "MEMORY_SHORT_TOOL_DEF",
     "MemoryTools",

@@ -25,19 +25,25 @@ logger = logging.getLogger(__name__)
 LIGHTRAG_URL = os.getenv("LIGHTRAG_URL", "http://host.docker.internal:8128")
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "/vault"))
 FACTS_FILE = VAULT_PATH / "Projects/Lab/Apps/Sonique/learned-facts.md"
-_QUERY_TIMEOUT = 10.0
+_QUERY_TIMEOUT = 8.0
 _WRITE_TIMEOUT = 15.0
+_TOP_K = 6
 
 
-async def _query(text: str, mode: str = "hybrid") -> str:
-    """Send a query to LightRAG and return the answer string."""
+async def _query(text: str) -> list[dict]:
+    """Fetch top-k chunks from LightRAG with no server-side LLM synthesis.
+
+    LightRAG's internal synthesis path runs qwen2.5:14b locally and takes 10-15s.
+    We skip it and let the main voice LLM (Claude) synthesize from the raw chunks.
+    Returns a list of {source, chunk, similarity, content} dicts.
+    """
     async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT) as client:
         resp = await client.post(
             f"{LIGHTRAG_URL}/query",
-            json={"query": text, "mode": mode},
+            json={"query": text, "top_k": _TOP_K, "synthesize": False},
         )
         resp.raise_for_status()
-        return resp.json().get("answer", "")
+        return resp.json().get("sources", [])
 
 
 def _append_fact(fact: str) -> None:
@@ -90,20 +96,38 @@ class LightRAGTools:
         Do NOT use for real-time data like weather, scores, or live prices — use web_search for those.
 
         Args:
-            query: Natural language question, e.g. "What is the Sonique project?", "Charlie's preferences", "Hone architecture"
+            query: Natural language keyword query. Prefer specific terms (project or tool names, file names)
+                   over abstract phrasings. "Helmsman architecture" works better than "who is Helmsman".
 
         Returns:
-            Relevant context from the knowledge graph, or a message that nothing was found.
+            Relevant chunks from the knowledge base, each with its source path. Read them to answer the user.
         """
         logger.info(f"search_knowledge: {query!r}")
         try:
-            answer = await _query(query)
-            if not answer or answer.strip().lower() in ("", "no relevant context found."):
-                return "Nothing found in the knowledge base for that query."
-            return answer
+            sources = await _query(query)
         except Exception as e:
             logger.warning(f"LightRAG query failed: {e}")
             return "Knowledge base is temporarily unavailable."
+
+        if not sources:
+            return "Nothing found in the knowledge base for that query."
+
+        # Format chunks for the LLM — source path header, then content.
+        # Keep total length reasonable for voice context.
+        blocks = []
+        for s in sources:
+            similarity = s.get("similarity", 0)
+            if similarity < 0.55:
+                continue
+            header = f"[{s.get('source', '?')}  similarity={similarity}]"
+            content = (s.get("content", "") or "").strip()
+            if content:
+                blocks.append(f"{header}\n{content}")
+
+        if not blocks:
+            return "Nothing relevant found in the knowledge base."
+
+        return "\n\n---\n\n".join(blocks)
 
     @function_tool
     async def store_knowledge(self, fact: str) -> str:

@@ -65,17 +65,68 @@ class AnthropicProvider(LLMProvider):
     def model(self) -> str:
         return self._model
 
+    def _convert_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert OpenAI-format messages to Anthropic format.
+
+        OpenAI uses tool_calls on assistant messages and role=tool for results.
+        Anthropic uses tool_use content blocks and tool_result content blocks.
+        Also merges consecutive same-role messages (Anthropic requires alternating).
+        """
+        converted: list[dict[str, Any]] = []
+
+        for msg in messages:
+            role = msg.get("role")
+
+            if role == "assistant":
+                content: list[Any] = []
+                if msg.get("content"):
+                    content.append({"type": "text", "text": msg["content"]})
+                for tc in msg.get("tool_calls", []):
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments", "{}")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except (json.JSONDecodeError, ValueError):
+                            args = {}
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc.get("id") or str(uuid.uuid4()),
+                        "name": fn.get("name", ""),
+                        "input": args,
+                    })
+                converted.append({"role": "assistant", "content": content or [{"type": "text", "text": ""}]})
+
+            elif role == "tool":
+                # Merge into previous user message if possible, else create new one
+                tool_block = {
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                }
+                if converted and converted[-1]["role"] == "user" and isinstance(converted[-1]["content"], list):
+                    converted[-1]["content"].append(tool_block)
+                else:
+                    converted.append({"role": "user", "content": [tool_block]})
+
+            else:
+                converted.append(msg)
+
+        return converted
+
     def _build_request(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
     ) -> dict[str, Any]:
-        """Build Anthropic API request. Extracts system prompt from messages."""
+        """Build Anthropic API request. Extracts system prompt and converts message format."""
         system = ""
-        filtered: list[dict[str, Any]] = []
+        raw: list[dict[str, Any]] = []
         for msg in messages:
             if msg.get("role") == "system":
                 system = msg.get("content", "")
             else:
-                filtered.append(msg)
+                raw.append(msg)
+
+        filtered = self._convert_messages(raw)
 
         req: dict[str, Any] = {
             "model": self._model,

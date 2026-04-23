@@ -49,7 +49,9 @@ from livekit.plugins import openai, silero  # noqa: E402
 
 from caal import CAALLLM  # noqa: E402
 from caal.integrations import (  # noqa: E402
+    HelmsmanTools,
     LightRAGTools,
+    MCPHubTools,
     MemoryTools,
     WebSearchTools,
     create_hass_tools,
@@ -209,7 +211,7 @@ def load_prompt(language: str = "en") -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MemoryTools, WebSearchTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MemoryTools, WebSearchTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(
@@ -700,9 +702,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         agent=assistant,
     )
 
-    # Say a canned greeting using agent name — avoids LLM call that could trigger tools
+    # Brief pause so the audio channel is fully open before speaking — prevents first word cutoff
+    await asyncio.sleep(0.8)
+
+    # First-ever session gets the full intro; subsequent sessions get a short ready signal
     agent_name = settings_module.get_setting("agent_name", "Cal")
-    await session.say(f"Hello! I'm {agent_name}, your voice assistant. How can I help you?")
+    first_launch = not settings_module.get_setting("first_launch_completed", False)
+    if first_launch:
+        await session.say(f"Hey, I'm {agent_name}. I'm your voice assistant — just talk and I'll listen. What can I help you with?")
+        settings_module.save_settings({"first_launch_completed": True})
+    else:
+        await session.say(f"{agent_name} is online.")
 
     logger.info("Agent ready - listening for speech...")
 

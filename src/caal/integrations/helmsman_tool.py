@@ -127,13 +127,24 @@ async def _dispatch(
     task_num = data.get("task_num")
 
     # Push-trigger the dispatch watcher so work starts within ~1s instead of
-    # waiting up to the next 10s poll cycle. Best-effort; watcher's own 10s
-    # launchd schedule covers us if the trigger can't reach the service.
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            await client.post(f"{HELMSMAN_DB_URL}/dispatch/trigger")
-    except Exception:
-        pass
+    # waiting for the next 10s launchd poll. Fire two triggers staggered by
+    # ~700ms: the first covers the fast path where n8n has already flushed the
+    # task into task-state.json; the second catches the race where n8n's write
+    # lands *after* the first trigger fired and that cycle saw nothing new.
+    # Best-effort — the 10s launchd fallback covers us if both triggers fail.
+    async def _fire():
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(f"{HELMSMAN_DB_URL}/dispatch/trigger")
+        except Exception:
+            pass
+
+    await _fire()
+    # Schedule the second trigger in the background — don't block the return.
+    async def _fire_delayed():
+        await asyncio.sleep(0.7)
+        await _fire()
+    asyncio.create_task(_fire_delayed())
 
     return True, task_num if isinstance(task_num, int) else None, "Queued."
 

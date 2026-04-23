@@ -7,10 +7,13 @@ export async function GET(request: NextRequest) {
   try {
     const settingsRes = await fetch(`${WEBHOOK_URL}/settings`);
     const settings = settingsRes.ok ? await settingsRes.json() : {};
-    const serverUrl: string = settings.client_connection_url || request.nextUrl.origin;
+    const localUrl: string = settings.client_connection_url || request.nextUrl.origin;
+    const externalUrl: string = request.nextUrl.searchParams.get('external') ?? '';
     const apiKey: string = process.env.CAAL_API_KEY ?? '';
 
-    const qrData = `sonique://connect?url=${encodeURIComponent(serverUrl)}&key=${encodeURIComponent(apiKey)}`;
+    const params = new URLSearchParams({ local: localUrl, key: apiKey });
+    if (externalUrl) params.set('external', externalUrl);
+    const qrData = `sonique://connect?${params.toString()}`;
 
     const dataUrl: string = await QRCode.toDataURL(qrData, {
       width: 300,

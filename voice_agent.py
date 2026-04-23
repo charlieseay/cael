@@ -761,9 +761,9 @@ def preload_models():
         except Exception as e:
             logger.warning(f"  Failed to preload STT model: {e}")
 
-    # Warm up Ollama LLM (skip if using Groq cloud LLM)
-    if llm_provider == "groq":
-        logger.info("  Skipping LLM preload (using Groq)")
+    # Warm up Ollama LLM (skip if using any cloud LLM provider)
+    if llm_provider != "ollama":
+        logger.info(f"  Skipping LLM preload (using {llm_provider})")
     else:
         ollama_host = settings.get("ollama_host") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         ollama_model = settings.get("ollama_model") or os.getenv("OLLAMA_MODEL", "ministral-3:8b")

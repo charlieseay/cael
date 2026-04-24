@@ -1,0 +1,6 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+# Backend (enable when wiring):
+# kokoro==0.3.4
+# soundfile==0.12.1

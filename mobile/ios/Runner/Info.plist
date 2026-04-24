@@ -32,6 +32,10 @@
 	<string>CAAL uses your camera for video calls</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>CAAL needs microphone access for voice conversations</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>CAAL creates reminders from your voice conversation.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>CAAL uses Siri intents to execute on-device actions during conversation.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

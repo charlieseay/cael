@@ -94,7 +94,9 @@ class ControlBar extends StatelessWidget {
                       isActive: isActive,
                       iconColor: isActive ? const Color(0xFF45997C) : null,
                       sfIcon: sf.SFIcons.sf_wrench_and_screwdriver_fill,
-                      onTap: isActive ? () => _showToolDetails(context, status) : null,
+                      onTap: (isActive || toolCtrl.lastSiriExecutionMessage != null)
+                          ? () => _showToolDetails(context, status)
+                          : null,
                     ),
                   );
                 },
@@ -124,6 +126,7 @@ class _ToolDetailsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final executionMessage = context.watch<ToolStatusCtrl>().lastSiriExecutionMessage;
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -149,6 +152,22 @@ class _ToolDetailsSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
+          if (executionMessage != null) ...[
+            Text(
+              'Siri bridge',
+              style: const TextStyle(
+                color: Color(0xFF7AA8F7),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              executionMessage,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+          ],
           for (int i = 0; i < status.toolNames.length; i++) ...[
             if (i > 0) const SizedBox(height: 12),
             _ToolEntry(

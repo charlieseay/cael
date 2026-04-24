@@ -13,8 +13,45 @@ import time
 from livekit.agents import function_tool
 
 from .. import network_state
+from ..network_state import NetworkState
 
 logger = logging.getLogger(__name__)
+
+
+def build_network_response(state: NetworkState, now: float) -> dict:
+    """Pure function — compose the check_network response from a state + clock.
+
+    Separated from the @function_tool wrapper so logic is testable without
+    stubbing the livekit decorator or touching the module-level cache.
+    """
+    seconds_ago = int(now - state.received_at)
+
+    if state.connection == "unknown":
+        return {
+            "connection_type": "unknown",
+            "is_expensive": False,
+            "is_constrained": False,
+            "voice_summary": (
+                "Connection status not available yet — "
+                "the iOS client hasn't reported in."
+            ),
+            "last_update_seconds_ago": seconds_ago,
+        }
+
+    parts = [f"You're on {state.connection}"]
+    if state.is_expensive:
+        parts.append("metered connection")
+    if state.is_constrained:
+        parts.append("constrained mode")
+    voice_summary = ", ".join(parts) + "."
+
+    return {
+        "connection_type": state.connection,
+        "is_expensive": state.is_expensive,
+        "is_constrained": state.is_constrained,
+        "voice_summary": voice_summary,
+        "last_update_seconds_ago": seconds_ago,
+    }
 
 
 class NetworkTools:
@@ -35,34 +72,4 @@ class NetworkTools:
             Dict with connection_type, is_expensive, is_constrained,
             voice_summary, and last_update_seconds_ago.
         """
-        state = network_state.get()
-        seconds_ago = int(time.time() - state.received_at)
-
-        if state.connection == "unknown":
-            return {
-                "connection_type": "unknown",
-                "is_expensive": False,
-                "is_constrained": False,
-                "voice_summary": (
-                    "Connection status not available yet — "
-                    "the iOS client hasn't reported in."
-                ),
-                "last_update_seconds_ago": seconds_ago,
-            }
-
-        # Build a voice-friendly summary iOS can override later;
-        # for Phase 1, CAAL assembles it from the raw fields.
-        parts = [f"You're on {state.connection}"]
-        if state.is_expensive:
-            parts.append("metered connection")
-        if state.is_constrained:
-            parts.append("constrained mode")
-        voice_summary = ", ".join(parts) + "."
-
-        return {
-            "connection_type": state.connection,
-            "is_expensive": state.is_expensive,
-            "is_constrained": state.is_constrained,
-            "voice_summary": voice_summary,
-            "last_update_seconds_ago": seconds_ago,
-        }
+        return build_network_response(network_state.get(), time.time())

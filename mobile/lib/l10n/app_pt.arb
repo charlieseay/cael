@@ -88,5 +88,7 @@
   "failedToSaveAgent": "Falha ao salvar configurações do agente: {code}",
   "downloadingVoice": "Baixando modelo de voz...",
   "messageHint": "Mensagem...",
-  "toolParameters": "Parâmetros da ferramenta"
+  "toolParameters": "Parâmetros da ferramenta",
+  "standbyMode": "Standby",
+  "sayCaelToWake": "Diga \"Hey Cael\" para reativar"
 }

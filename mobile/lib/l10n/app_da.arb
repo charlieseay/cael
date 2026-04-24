@@ -103,5 +103,7 @@
   "speachesLocalStt": "Lokal Whisper",
   "groqWhisperCloud": "Sky Whisper",
   "sttGroqKeyShared": "Bruger samme API-nøgle som LLM",
-  "sttGroqKeyNeeded": "Groq API-nøgle påkrævet til STT"
+  "sttGroqKeyNeeded": "Groq API-nøgle påkrævet til STT",
+  "standbyMode": "Standby",
+  "sayCaelToWake": "Sig \"Hey Cael\" for at vågne"
 }

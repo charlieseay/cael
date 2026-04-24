@@ -316,4 +316,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sttGroqKeyNeeded => 'Groq API key required for STT';
+
+  @override
+  String get standbyMode => 'Standby';
+
+  @override
+  String get sayCaelToWake => 'Say "Hey Cael" to wake up';
 }

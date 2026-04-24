@@ -317,4 +317,10 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get sttGroqKeyNeeded => 'Chiave API Groq richiesta per STT';
+
+  @override
+  String get standbyMode => 'Standby';
+
+  @override
+  String get sayCaelToWake => 'Di "Hey Cael" per riattivare';
 }

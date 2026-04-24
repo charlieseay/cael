@@ -12,6 +12,9 @@ enum WakeWordState {
 
   /// Wake word detected, agent is processing conversation
   active,
+
+  /// Extended idle — no wake word for standby_timeout (default 30s)
+  standby,
 }
 
 /// Controller that listens for wakeword_state data packets from the backend.
@@ -118,6 +121,7 @@ class WakeWordStateCtrl extends ChangeNotifier {
         _state = switch (stateStr) {
           'listening' => WakeWordState.listening,
           'active' => WakeWordState.active,
+          'standby' => WakeWordState.standby,
           _ => null,
         };
         notifyListeners();

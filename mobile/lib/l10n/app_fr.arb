@@ -103,5 +103,7 @@
   "speachesLocalStt": "Whisper local",
   "groqWhisperCloud": "Whisper cloud",
   "sttGroqKeyShared": "Utilise la même clé API que le LLM",
-  "sttGroqKeyNeeded": "Clé API Groq requise pour le STT"
+  "sttGroqKeyNeeded": "Clé API Groq requise pour le STT",
+  "standbyMode": "Veille",
+  "sayCaelToWake": "Dites \"Hey Cael\" pour réactiver"
 }

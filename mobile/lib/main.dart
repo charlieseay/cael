@@ -1,3 +1,4 @@
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -17,6 +18,16 @@ void main() async {
 
   // Initialize locale provider
   final localeProvider = LocaleProvider();
+
+  // Check for deep link launch (e.g., Siri Shortcut opening cael://activate)
+  final appLinks = AppLinks();
+  Uri? initialLink;
+  try {
+    initialLink = await appLinks.getInitialLink();
+  } catch (_) {
+    // No initial link — normal launch
+  }
+  final autoConnect = initialLink?.scheme == 'cael' && initialLink?.host == 'activate';
 
   // Try to load .env as fallback for development (optional)
   try {
@@ -40,5 +51,7 @@ void main() async {
   runApp(CaalApp(
     configService: configService,
     localeProvider: localeProvider,
+    autoConnect: autoConnect,
+    appLinks: appLinks,
   ));
 }

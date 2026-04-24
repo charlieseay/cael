@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
@@ -23,11 +26,15 @@ import 'widgets/session_error_banner.dart';
 class CaalApp extends StatefulWidget {
   final ConfigService configService;
   final LocaleProvider localeProvider;
+  final bool autoConnect;
+  final AppLinks? appLinks;
 
   const CaalApp({
     super.key,
     required this.configService,
     required this.localeProvider,
+    this.autoConnect = false,
+    this.appLinks,
   });
 
   @override
@@ -36,19 +43,34 @@ class CaalApp extends StatefulWidget {
 
 class _CaalAppState extends State<CaalApp> {
   AppCtrl? _appCtrl;
+  StreamSubscription<Uri>? _linkSub;
 
   @override
   void initState() {
     super.initState();
     _initializeAppCtrl();
+    _listenForDeepLinks();
   }
 
   void _initializeAppCtrl() {
     if (widget.configService.isConfigured) {
       _appCtrl = AppCtrl(
         serverUrl: widget.configService.serverUrl,
+        autoConnect: widget.autoConnect,
       );
     }
+  }
+
+  /// Listen for deep links while the app is already running (warm relaunch).
+  void _listenForDeepLinks() {
+    final appLinks = widget.appLinks;
+    if (appLinks == null) return;
+
+    _linkSub = appLinks.uriLinkStream.listen((uri) {
+      if (uri.scheme == 'cael' && uri.host == 'activate') {
+        _appCtrl?.activateFromDeepLink();
+      }
+    });
   }
 
   void _onConfigured() {
@@ -61,6 +83,7 @@ class _CaalAppState extends State<CaalApp> {
 
   @override
   void dispose() {
+    _linkSub?.cancel();
     _appCtrl?.dispose();
     super.dispose();
   }

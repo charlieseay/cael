@@ -102,6 +102,7 @@ DEFAULT_SETTINGS = {
     "wake_word_model": "models/hey_jarvis.onnx",
     "wake_word_threshold": 0.5,
     "wake_word_timeout": 3.0,  # seconds of silence before returning to listening
+    "standby_timeout": 30.0,  # seconds in listening before entering standby (power save)
     # Turn detection settings (advanced)
     "allow_interruptions": True,  # Whether user can interrupt agent mid-speech
     "min_endpointing_delay": 0.5,  # Seconds to wait before considering turn complete

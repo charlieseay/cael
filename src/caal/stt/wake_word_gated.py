@@ -42,6 +42,7 @@ class WakeWordState(str, Enum):
 
     LISTENING = "listening"
     ACTIVE = "active"
+    STANDBY = "standby"
 
 
 @dataclass
@@ -67,6 +68,7 @@ class WakeWordGatedSTT(STT):
         model_path: str,
         threshold: float = 0.5,
         silence_timeout: float = 3.0,
+        standby_timeout: float = 30.0,
         on_wake_detected: Callable[[], Awaitable[None]] | None = None,
         on_state_changed: Callable[[WakeWordState], Awaitable[None]] | None = None,
     ) -> None:
@@ -77,6 +79,7 @@ class WakeWordGatedSTT(STT):
             model_path: Path to the OpenWakeWord .onnx model file.
             threshold: Wake word detection threshold (0-1). Higher = more strict.
             silence_timeout: Seconds of silence before returning to listening mode.
+            standby_timeout: Seconds in LISTENING before entering STANDBY (power save).
             on_wake_detected: Callback when wake word is detected (e.g., trigger greeting).
             on_state_changed: Callback when state changes (for publishing to clients).
         """
@@ -90,6 +93,7 @@ class WakeWordGatedSTT(STT):
         self._model_path = model_path
         self._threshold = threshold
         self._silence_timeout = silence_timeout
+        self._standby_timeout = standby_timeout
         self._on_wake_detected = on_wake_detected
         self._on_state_changed = on_state_changed
         self._oww: OWWModel | None = None
@@ -143,6 +147,7 @@ class WakeWordGatedSTT(STT):
             oww=self._ensure_model(),
             threshold=self._threshold,
             silence_timeout=self._silence_timeout,
+            standby_timeout=self._standby_timeout,
             on_wake_detected=self._on_wake_detected,
             on_state_changed=self._on_state_changed,
             language=language,
@@ -183,6 +188,7 @@ class WakeWordGatedStream(RecognizeStream):
         oww: OWWModel,
         threshold: float,
         silence_timeout: float,
+        standby_timeout: float,
         on_wake_detected: Callable[[], Awaitable[None]] | None,
         on_state_changed: Callable[[WakeWordState], Awaitable[None]] | None,
         language: NotGivenOr[str],
@@ -198,6 +204,7 @@ class WakeWordGatedStream(RecognizeStream):
         self._oww = oww
         self._threshold = threshold
         self._silence_timeout = silence_timeout
+        self._standby_timeout = standby_timeout
         self._on_wake_detected = on_wake_detected
         self._on_state_changed = on_state_changed
         self._language = language
@@ -206,6 +213,7 @@ class WakeWordGatedStream(RecognizeStream):
         self._state = WakeWordState.LISTENING
         self._oww_buffer: list[np.ndarray] = []  # Buffer for wake word detection
         self._last_speech_time: float = 0.0
+        self._listening_since: float = 0.0  # When we entered LISTENING state
         self._inner_stream: RecognizeStream | None = None
         self._agent_busy: bool = False  # True while agent is thinking/speaking
         self._speech_active: bool = False  # True while VAD detects speech
@@ -224,6 +232,8 @@ class WakeWordGatedStream(RecognizeStream):
         """Update state and notify callback."""
         if self._state != state:
             self._state = state
+            if state == WakeWordState.LISTENING:
+                self._listening_since = time.time()
             logger.info(f"Wake word state changed to: {state.value}")
             if self._on_state_changed:
                 try:
@@ -263,7 +273,7 @@ class WakeWordGatedStream(RecognizeStream):
 
                 frame: rtc.AudioFrame = data
 
-                if self._state == WakeWordState.LISTENING:
+                if self._state in (WakeWordState.LISTENING, WakeWordState.STANDBY):
                     await self._process_wake_word(frame)
                 else:
                     # Active mode - forward to StreamAdapter AND VAD tracker
@@ -299,11 +309,11 @@ class WakeWordGatedStream(RecognizeStream):
                     logger.debug("VAD: speech ended")
 
         async def _monitor_silence() -> None:
-            """Monitor for silence timeout to return to listening mode."""
+            """Monitor for silence timeout and standby transitions."""
             while True:
                 await asyncio.sleep(0.5)  # Check every 500ms
 
-                # Only timeout if active, agent is not busy, AND user is not speaking
+                # ACTIVE → LISTENING after silence_timeout
                 if (
                     self._state == WakeWordState.ACTIVE
                     and not self._agent_busy
@@ -318,6 +328,16 @@ class WakeWordGatedStream(RecognizeStream):
                         await self._set_state(WakeWordState.LISTENING)
                         # Reset OpenWakeWord model state for fresh detection
                         self._oww.reset()
+
+                # LISTENING → STANDBY after standby_timeout with no wake word
+                elif self._state == WakeWordState.LISTENING:
+                    idle_time = time.time() - self._listening_since
+                    if idle_time >= self._standby_timeout:
+                        logger.info(
+                            f"Standby timeout ({self._standby_timeout}s idle), "
+                            "entering standby"
+                        )
+                        await self._set_state(WakeWordState.STANDBY)
 
         tasks = [
             asyncio.create_task(_process_audio(), name="process_audio"),

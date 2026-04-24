@@ -105,6 +105,7 @@ class AppCtrl extends ChangeNotifier {
 
   AppCtrl({
     required String serverUrl,
+    bool autoConnect = false,
   })  : _serverUrl = serverUrl {
     final format = DateFormat('HH:mm:ss');
     Logger.root.level = Level.FINE;
@@ -121,6 +122,22 @@ class AppCtrl extends ChangeNotifier {
     });
 
     session.addListener(_handleSessionChange);
+
+    // Auto-connect when launched via Siri / deep link
+    if (autoConnect) {
+      _logger.info('Auto-connect triggered (Siri/deep link launch)');
+      // Schedule after current frame to allow widget tree to build
+      Future.microtask(() => connect());
+    }
+  }
+
+  /// Called when app receives cael://activate while already running.
+  /// Reconnects if disconnected, or no-ops if already active.
+  void activateFromDeepLink() {
+    _logger.info('Deep link activation received');
+    if (_session.connectionState == sdk.ConnectionState.disconnected) {
+      connect();
+    }
   }
 
   /// Update server URL config.

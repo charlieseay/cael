@@ -318,4 +318,10 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get sttGroqKeyNeeded => 'Clé API Groq requise pour le STT';
+
+  @override
+  String get standbyMode => 'Veille';
+
+  @override
+  String get sayCaelToWake => 'Dites "Hey Cael" pour réactiver';
 }

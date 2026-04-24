@@ -686,6 +686,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Groq API key required for STT'**
   String get sttGroqKeyNeeded;
+
+  /// Standby state title
+  ///
+  /// In en, this message translates to:
+  /// **'Standby'**
+  String get standbyMode;
+
+  /// Standby wake instruction
+  ///
+  /// In en, this message translates to:
+  /// **'Say "Hey Cael" to wake up'**
+  String get sayCaelToWake;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

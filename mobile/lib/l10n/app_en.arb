@@ -305,5 +305,11 @@
   "@sttGroqKeyShared": { "description": "STT Groq key shared info" },
 
   "sttGroqKeyNeeded": "Groq API key required for STT",
-  "@sttGroqKeyNeeded": { "description": "STT Groq key needed info" }
+  "@sttGroqKeyNeeded": { "description": "STT Groq key needed info" },
+
+  "standbyMode": "Standby",
+  "@standbyMode": { "description": "Standby state title" },
+
+  "sayCaelToWake": "Say \"Hey Cael\" to wake up",
+  "@sayCaelToWake": { "description": "Standby wake instruction" }
 }

@@ -485,17 +485,20 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             except Exception as e:
                 logger.warning(f"Failed to publish wake word state: {e}")
 
+        standby_timeout = all_settings.get("standby_timeout", 30.0)
+
         stt_instance = WakeWordGatedSTT(
             inner_stt=base_stt,
             model_path=wake_word_model,
             threshold=wake_word_threshold,
             silence_timeout=wake_word_timeout,
+            standby_timeout=standby_timeout,
             on_wake_detected=on_wake_detected,
             on_state_changed=on_state_changed,
         )
         logger.info(
             f"  Wake word: ENABLED (model={wake_word_model}, "
-            f"threshold={wake_word_threshold})"
+            f"threshold={wake_word_threshold}, standby={standby_timeout}s)"
         )
     else:
         stt_instance = base_stt

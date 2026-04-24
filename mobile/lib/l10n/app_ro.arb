@@ -103,5 +103,7 @@
   "speachesLocalStt": "Whisper local",
   "groqWhisperCloud": "Whisper cloud",
   "sttGroqKeyShared": "Folosește aceeași cheie API ca LLM",
-  "sttGroqKeyNeeded": "Cheie API Groq necesară pentru STT"
+  "sttGroqKeyNeeded": "Cheie API Groq necesară pentru STT",
+  "standbyMode": "Standby",
+  "sayCaelToWake": "Spune \"Hey Cael\" pentru a reactiva"
 }

@@ -275,7 +275,12 @@ class _AgentListeningPlaceholder extends StatelessWidget {
 
         if (isWakeWordMode) {
           // Server-side wake word detection is active
-          if (wakeWordState == WakeWordState.listening) {
+          if (wakeWordState == WakeWordState.standby) {
+            icon = Icons.bedtime_outlined;
+            statusText = l10n.standbyMode;
+            subtitle = l10n.sayCaelToWake;
+            iconColor = colorScheme.outline.withValues(alpha: 0.5);
+          } else if (wakeWordState == WakeWordState.listening) {
             icon = Icons.hearing;
             statusText = l10n.sayWakeWord;
             subtitle = l10n.waitingForWakeWord;

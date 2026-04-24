@@ -509,8 +509,14 @@ def load_prompt_with_context(
     prompt = template.replace("{{CURRENT_DATE_CONTEXT}}", date_context)
     prompt = prompt.replace("{{TIMEZONE}}", timezone_display)
 
-    # Inject user profile if configured
+    # Inject the user-configured agent name (defaults to "Cael"). The user can
+    # rename their assistant from the iOS/macOS Settings screen — the model
+    # should introduce itself using whatever name they chose.
     settings = load_settings()
+    agent_name = settings.get("agent_name", "Cael")
+    prompt = prompt.replace("{{AGENT_NAME}}", agent_name)
+
+    # Inject user profile if configured
     user_profile = settings.get("user_profile", {})
     if user_profile:
         lines = [f"- {k}: {v}" for k, v in user_profile.items()]

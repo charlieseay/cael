@@ -1,8 +1,9 @@
 """caal-tts — lean text-to-speech microservice.
 
-POST /synthesize returns 16-bit PCM WAV audio. Backend will be Kokoro (CPU,
-Python package) on servers and a native TTS path (AVSpeechSynthesizer or
-bundled Kokoro) when we migrate to Swift (Option C).
+POST /synthesize returns 16-bit PCM WAV audio. Backend will be Piper
+(CPU, Python package — matches what SoniqueBar configures today) on
+servers, and a native TTS path (AVSpeechSynthesizer or bundled Piper)
+when we migrate to Swift (Option C).
 """
 
 import io

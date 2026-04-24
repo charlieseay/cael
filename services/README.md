@@ -23,10 +23,10 @@ Each service reads `HOST` and `PORT` from env.
 
 ## Services
 
-- [caal-stt](caal-stt/) — speech-to-text (replaces Speaches)
-- [caal-tts](caal-tts/) — text-to-speech (replaces Kokoro container)
+- [caal-stt](caal-stt/) — speech-to-text (replaces the STT half of Speaches)
+- [caal-tts](caal-tts/) — text-to-speech (wraps Piper — matches what SoniqueBar configures today)
 
-caal-agent (orchestration) stays in its current location for now; it's already lean.
+caal-agent (orchestration) stays in its current location for now; it's already lean. It continues to call out to host Ollama for the LLM.
 
 ## Status
 

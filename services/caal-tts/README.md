@@ -1,6 +1,6 @@
 # caal-tts
 
-Lean text-to-speech microservice. Replaces the Kokoro container for Sonique's single-user deployments.
+Lean text-to-speech microservice. Replaces the Piper-via-Speaches path for Sonique's single-user deployments. (Sonique today uses Piper, not Kokoro — see `ContainerManager.swift` in sonique-mac.)
 
 ## Endpoints
 
@@ -28,4 +28,4 @@ docker run --rm -p 8082:8082 -e HOST=0.0.0.0 caal-tts:dev
 
 ## Status
 
-Backend is a stub. `/synthesize` returns silent PCM (100 ms) so callers can exercise the contract. Next: wire Kokoro via the `kokoro` Python package and add voice selection.
+Backend is a stub. `/synthesize` returns silent PCM (100 ms) so callers can exercise the contract. Next: wire Piper via the `piper-tts` Python package and add voice selection (default `speaches-ai/piper-en_US-ryan-high` to match current Sonique config).

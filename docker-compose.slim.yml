@@ -22,6 +22,8 @@ services:
   # Disable the GPU services from the main compose so they do not try to start.
   speaches:
     profiles: ["disabled"]
+  speaches-init:
+    profiles: ["disabled"]
   kokoro:
     profiles: ["disabled"]
 
@@ -77,6 +79,7 @@ services:
       - SPEACHES_URL=http://caal-stt:8081
       - PIPER_URL=http://caal-tts:8082
       - TTS_PROVIDER=piper
+      - TTS_MODEL=piper
       - WHISPER_MODEL=small.en
     # Replace the upstream depends_on so the agent waits on caal-stt/caal-tts
     # instead of the now-disabled speaches/kokoro services.

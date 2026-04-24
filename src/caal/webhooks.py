@@ -46,7 +46,7 @@ from livekit.protocol.models import DataPacket
 from livekit.protocol.room import SendDataRequest
 from pydantic import BaseModel
 
-from . import registry_cache
+from . import network_state, registry_cache
 from . import settings as settings_module
 from .memory import ShortTermMemory
 from .settings import validate_url
@@ -339,6 +339,37 @@ async def health() -> HealthResponse:
         status="ok",
         active_sessions=rooms,
     )
+
+
+# =============================================================================
+# Network State Endpoint (Phase 1 — single-user, no auth)
+# =============================================================================
+
+
+class NetworkStateRequest(BaseModel):
+    """Request body for POST /api/network-state."""
+
+    connection: str  # "wifi" | "cellular" | "wired" | "other" | "none"
+    isExpensive: bool = False  # noqa: N815
+    isConstrained: bool = False  # noqa: N815
+    timestamp: str  # ISO 8601
+
+
+@app.post("/api/network-state", status_code=204)
+async def receive_network_state(req: NetworkStateRequest) -> None:
+    """Receive network connectivity state from the iOS client.
+
+    No auth — this is an internal endpoint reachable only from iOS on the
+    same LAN or over Tailscale. Auth lands in Phase 2 with multi-user support.
+    """
+    network_state.update(
+        connection=req.connection,
+        is_expensive=req.isExpensive,
+        is_constrained=req.isConstrained,
+        timestamp=req.timestamp,
+    )
+    logger.info("Network state received: %s (expensive=%s, constrained=%s)",
+                req.connection, req.isExpensive, req.isConstrained)
 
 
 # =============================================================================

@@ -407,11 +407,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             language=language,
         )
     else:
+        # Whisper small.en has no concept of custom product names. Feed a
+        # short vocabulary-bias prompt so it transcribes "Sonique" correctly
+        # and doesn't collapse it to "Sonic" (which derails the agent into
+        # Sonic-the-Hedgehog territory).
+        stt_bias_prompt = (
+            "The user is talking to Sonique, a self-hosted voice assistant "
+            "built by Seaynic Labs. Other proper nouns in the user's "
+            "vocabulary: Sonique, SoniqueBar, Seaynic, Cael, CAAL, Helmsman, "
+            "Orchestr8, Enchapter, Hone."
+        )
         base_stt = openai.STT(
             base_url=f"{SPEACHES_URL}/v1",
             api_key="not-needed",  # Speaches doesn't require auth
             model=WHISPER_MODEL,
             language=language,
+            prompt=stt_bias_prompt,
         )
 
     # Load wake word settings

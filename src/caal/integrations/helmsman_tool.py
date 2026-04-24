@@ -1,8 +1,8 @@
 """Helmsman closed-loop tools.
 
-Three direct tools that let Sonique dispatch work and capture ideas without
-routing through the MCP proxy. Each one is a single HTTP call to a known,
-stable endpoint on the Mac Mini:
+Direct tools that let Sonique dispatch work, query the queue, and capture
+ideas without routing through the MCP proxy. Each one is a single HTTP call
+to a known, stable endpoint on the Mac Mini:
 
   report_issue(title, description, issue_type)
       File a bug or feature request. Dispatches an investigation task to
@@ -12,6 +12,10 @@ stable endpoint on the Mac Mini:
   dispatch_task(task, brief, project, owner, effort)
       Add concrete actionable work to the task queue. Use for "build X",
       "update Y", "investigate Z" type requests.
+
+  get_task_queue_status(status_filter, owner_filter, task_num)
+      Query the queue for counts, breakdowns, and pending tasks — or look up
+      a single task by number. Returns a voice_summary for spoken output.
 
   capture_idea(title, description, tags)
       Append to the vault's ideas backlog. Use when the user says "we should
@@ -31,7 +35,8 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from collections import Counter
+from typing import Any, Optional
 
 import httpx
 from livekit.agents import function_tool
@@ -156,7 +161,7 @@ def _slugify(text: str) -> str:
 
 
 class HelmsmanTools:
-    """Three closed-loop tools for bug reports, task dispatch, and idea capture."""
+    """Closed-loop tools for bug reports, task dispatch, queue status, and idea capture."""
 
     @function_tool
     async def report_issue(
@@ -317,6 +322,122 @@ class HelmsmanTools:
         if title:
             summary += f". Title: {title}"
         return summary
+
+    @function_tool
+    async def get_task_queue_status(
+        self,
+        status_filter: Optional[str] = None,
+        owner_filter: Optional[str] = None,
+        task_num: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Get an overview of the task queue, or look up a single task by number.
+
+        Use when the user asks about the queue without a specific task number:
+        "what are we working on", "what's in the queue", "how many open tasks",
+        "what does Charlie have pending", "status of task 42".
+
+        Different from check_task: check_task returns a short one-liner for a
+        known task number. This tool returns counts, breakdowns, and a
+        voice_summary — better for broad questions.
+
+        Args:
+            status_filter: Optional status to filter by (e.g. "pending",
+                "in_progress", "shipped", "qa_failed"). Case-insensitive.
+            owner_filter: Optional owner to filter by (e.g. "CLAUDE", "CHARLIE").
+                Case-insensitive.
+            task_num: If set, return details for this single task instead of
+                the aggregated view.
+
+        Returns:
+            A dict with voice_summary (speakable sentence) plus either single-task
+            fields or aggregated counts and a pending_tasks list.
+        """
+        logger.info(
+            "get_task_queue_status: status=%s owner=%s num=%s",
+            status_filter, owner_filter, task_num,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{HELMSMAN_DB_URL}/tasks")
+                resp.raise_for_status()
+                rows: list[dict[str, Any]] = resp.json()
+        except Exception as e:
+            logger.warning("get_task_queue_status failed: %s", e)
+            return {"voice_summary": f"I couldn't reach the task database: {e}"}
+
+        # --- Single-task lookup ---
+        if task_num is not None:
+            t = next((r for r in rows if r.get("num") == task_num), None)
+            if not t:
+                return {"voice_summary": f"No task number {task_num} found."}
+            brief = (t.get("brief_text") or "")[:200]
+            return {
+                "num": t.get("num"),
+                "task": t.get("task", ""),
+                "owner": t.get("owner", ""),
+                "status": t.get("status", "unknown"),
+                "project": t.get("project", ""),
+                "effort": t.get("effort", ""),
+                "brief_text": brief,
+                "created_at": t.get("created_at", ""),
+                "voice_summary": (
+                    f"Task {task_num} is {t.get('status', 'unknown')}, "
+                    f"owned by {t.get('owner', 'unknown')}. "
+                    f"{(t.get('task') or '')[:80]}"
+                ),
+            }
+
+        # --- Aggregated view ---
+        # Apply filters
+        filtered = rows
+        if status_filter:
+            sf = status_filter.lower().strip()
+            filtered = [r for r in filtered if (r.get("status") or "").lower() == sf]
+        if owner_filter:
+            of = owner_filter.upper().strip()
+            filtered = [r for r in filtered if (r.get("owner") or "").upper() == of]
+
+        total = len(filtered)
+        by_status: dict[str, int] = dict(Counter(
+            (r.get("status") or "unknown").lower() for r in filtered
+        ))
+        by_owner: dict[str, int] = dict(Counter(
+            (r.get("owner") or "unknown").upper() for r in filtered
+        ))
+
+        # Pending tasks list (capped at 20)
+        pending = [
+            {
+                "num": r.get("num"),
+                "task": (r.get("task") or "")[:100],
+                "owner": r.get("owner", ""),
+                "project": r.get("project", ""),
+                "effort": r.get("effort", ""),
+            }
+            for r in filtered
+            if (r.get("status") or "").lower() == "pending"
+        ][:20]
+
+        # Build voice summary
+        status_parts = ", ".join(
+            f"{count} {status}" for status, count in sorted(by_status.items())
+        )
+        owner_names = ", ".join(sorted(by_owner.keys()))
+        summary = f"There are {total} tasks"
+        if status_parts:
+            summary += f": {status_parts}"
+        summary += "."
+        if pending:
+            pending_owners = ", ".join(sorted({p["owner"] for p in pending if p["owner"]}))
+            summary += f" Pending tasks are owned by {pending_owners}."
+
+        return {
+            "total": total,
+            "by_status": by_status,
+            "by_owner": by_owner,
+            "pending_tasks": pending,
+            "voice_summary": summary,
+        }
 
     @function_tool
     async def capture_idea(

@@ -25,6 +25,7 @@ Why these are direct tools (not routed through MCP hub):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re

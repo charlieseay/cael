@@ -28,4 +28,6 @@ docker run --rm -p 8081:8081 -e HOST=0.0.0.0 caal-stt:dev
 
 ## Status
 
-Backend is a stub. `/transcribe` returns an empty string so callers can exercise the contract. Next: wire faster-whisper and add a model env var.
+Backend wired — faster-whisper `small.en` by default, CPU int8. The model downloads from HuggingFace on first run and is cached in `$HF_HOME` (container default `/app/cache/huggingface`). Configurable via `STT_MODEL`, `STT_DEVICE`, `STT_COMPUTE`.
+
+Not yet integration-tested against live CAAL containers — next step is to run alongside the existing stack and send real audio.

@@ -28,4 +28,8 @@ docker run --rm -p 8082:8082 -e HOST=0.0.0.0 caal-tts:dev
 
 ## Status
 
-Backend is a stub. `/synthesize` returns silent PCM (100 ms) so callers can exercise the contract. Next: wire Piper via the `piper-tts` Python package and add voice selection (default `speaches-ai/piper-en_US-ryan-high` to match current Sonique config).
+Backend wired — Piper via the `piper-tts` Python package. Default voice `en_US-ryan-high` matches SoniqueBar's current config. The voice name Speaches uses (`speaches-ai/piper-en_US-ryan-high`) is normalized to the bare Piper form, so existing callers don't have to change.
+
+Voices auto-download on first use from `rhasspy/piper-voices` on HuggingFace into `TTS_VOICE_DIR` (container default `/app/voices`) and are cached in memory after load.
+
+Not yet integration-tested against live CAAL containers — next step is to run alongside the existing stack and compare output against the current Speaches-routed path.

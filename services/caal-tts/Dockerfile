@@ -1,4 +1,9 @@
-FROM python:3.12-slim
+# piper-phonemize 1.1.0 ships Linux wheels for Python 3.10/3.11 only (no
+# 3.12 Linux wheel as of the current release). Pin to 3.11-slim so the
+# pip install resolves without needing to compile phonemize from source.
+# Both linux/amd64 and linux/arm64 wheels exist at 3.11, so no --platform
+# pin is required.
+FROM python:3.11-slim
 
 WORKDIR /app
 

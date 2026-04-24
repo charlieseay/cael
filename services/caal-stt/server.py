@@ -1,9 +1,18 @@
 """caal-stt — lean speech-to-text microservice.
 
-Wraps faster-whisper. The model loads once at startup and stays resident;
-/transcribe accepts multipart audio, returns JSON with the transcript and
-the detected language. FFmpeg is available in the container image for
-non-WAV inputs.
+Wraps faster-whisper. Exposes two endpoint shapes:
+
+  1. OpenAI-compatible: POST /v1/audio/transcriptions
+     multipart form with file, model, language, response_format — matches
+     what caal-agent's openai.STT plugin posts. Drop-in for Speaches.
+
+  2. Minimal: POST /transcribe
+     multipart file field only; returns JSON with extra fields (language
+     probability, duration). For direct callers that don't need OpenAI
+     compatibility.
+
+The model loads once at startup and stays resident. FFmpeg is available
+in the container image so non-WAV inputs work.
 
 Env:
   HOST          bind host (default 127.0.0.1)
@@ -20,7 +29,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse, Response
 from faster_whisper import WhisperModel
 
 MODEL_SIZE = os.getenv("STT_MODEL", "small.en")
@@ -42,6 +52,36 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="caal-stt", version="0.1.0", lifespan=lifespan)
 
 
+def _run_transcribe(
+    audio_bytes: bytes,
+    filename: str | None,
+    *,
+    language: str | None = None,
+    initial_prompt: str | None = None,
+    temperature: float = 0.0,
+) -> tuple[str, list, object]:
+    if _model is None:
+        raise HTTPException(status_code=503, detail="model not loaded")
+    suffix = Path(filename or "in.wav").suffix or ".wav"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        tmp.write(audio_bytes)
+        tmp.close()
+        segment_gen, info = _model.transcribe(
+            tmp.name,
+            beam_size=BEAM_SIZE,
+            language=language,
+            initial_prompt=initial_prompt,
+            temperature=temperature,
+        )
+        # Materialize the generator once; text and segments both need it.
+        segments = list(segment_gen)
+        text = " ".join(s.text.strip() for s in segments).strip()
+        return text, segments, info
+    finally:
+        Path(tmp.name).unlink(missing_ok=True)
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -53,26 +93,56 @@ def health() -> dict:
     }
 
 
+@app.get("/v1/models")
+def list_models() -> dict:
+    return {"object": "list", "data": [{"id": MODEL_SIZE, "object": "model"}]}
+
+
+@app.post("/v1/audio/transcriptions")
+async def openai_transcriptions(
+    file: UploadFile = File(...),
+    model: str | None = Form(None),
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    response_format: str = Form("json"),
+    temperature: float = Form(0.0),
+) -> Response:
+    data = await file.read()
+    text, segments, info = _run_transcribe(
+        data,
+        file.filename,
+        language=language,
+        initial_prompt=prompt,
+        temperature=temperature,
+    )
+    if response_format == "text":
+        return Response(content=text, media_type="text/plain")
+    if response_format == "verbose_json":
+        return JSONResponse(
+            {
+                "task": "transcribe",
+                "language": info.language,
+                "duration": info.duration,
+                "text": text,
+                "segments": [
+                    {"id": i, "start": s.start, "end": s.end, "text": s.text}
+                    for i, s in enumerate(segments)
+                ],
+            }
+        )
+    return JSONResponse({"text": text})
+
+
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)) -> dict:
-    if _model is None:
-        raise HTTPException(status_code=503, detail="model not loaded")
     data = await audio.read()
-    suffix = Path(audio.filename or "in.wav").suffix or ".wav"
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-    try:
-        tmp.write(data)
-        tmp.close()
-        segments, info = _model.transcribe(tmp.name, beam_size=BEAM_SIZE)
-        text = " ".join(s.text.strip() for s in segments).strip()
-        return {
-            "text": text,
-            "language": info.language,
-            "language_probability": info.language_probability,
-            "duration": info.duration,
-        }
-    finally:
-        Path(tmp.name).unlink(missing_ok=True)
+    text, _segments, info = _run_transcribe(data, audio.filename)
+    return {
+        "text": text,
+        "language": info.language,
+        "language_probability": info.language_probability,
+        "duration": info.duration,
+    }
 
 
 if __name__ == "__main__":

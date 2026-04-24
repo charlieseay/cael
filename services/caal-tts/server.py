@@ -1,18 +1,27 @@
 """caal-tts — lean text-to-speech microservice.
 
-Wraps Piper. Voices download on first use from HuggingFace
-(rhasspy/piper-voices) into TTS_VOICE_DIR and stay cached. Loaded voices
-are kept in memory; synthesis returns 16-bit PCM WAV.
+Wraps Piper. Exposes two endpoint shapes:
+
+  1. OpenAI-compatible: POST /v1/audio/speech
+     JSON {model, input, voice, response_format} — matches what
+     caal-agent's synthesizer.py posts. Drop-in for the Piper path
+     through Speaches. Only `response_format: "wav"` is supported.
+
+  2. Minimal: POST /synthesize
+     JSON {text, voice} — simpler surface for direct callers.
+
+Voices download on first use from HuggingFace (rhasspy/piper-voices)
+into TTS_VOICE_DIR and stay cached. Loaded voices are kept in memory.
+
+Voice names follow Piper's layout: `{lang_region}-{speaker}-{quality}`,
+e.g. `en_US-ryan-high`. The Speaches prefix (`speaches-ai/piper-`) is
+stripped if present so existing SoniqueBar/CAAL configs work unchanged.
 
 Env:
   HOST            bind host (default 127.0.0.1)
   PORT            bind port (default 8082)
   TTS_VOICE       default voice name (default en_US-ryan-high)
   TTS_VOICE_DIR   cache dir for .onnx voice files (default /app/voices)
-
-Voice naming follows Piper's HuggingFace layout: `{lang_region}-{speaker}-{quality}`,
-e.g. `en_US-ryan-high`. The Speaches prefix (`speaches-ai/piper-`) is
-stripped if present, for compatibility with SoniqueBar's current config.
 """
 
 import io
@@ -36,8 +45,6 @@ _voices: dict[str, PiperVoice] = {}
 
 
 def _normalize(name: str) -> str:
-    # SoniqueBar stores voices as "speaches-ai/piper-en_US-ryan-high"; Piper
-    # uses the bare "en_US-ryan-high" form. Accept both.
     prefix = "speaches-ai/piper-"
     if name.startswith(prefix):
         name = name[len(prefix):]
@@ -49,7 +56,6 @@ def _voice_paths(name: str) -> tuple[Path, Path]:
 
 
 def _voice_urls(name: str) -> tuple[str, str]:
-    # en_US-ryan-high -> en/en_US/ryan/high/en_US-ryan-high.{onnx,onnx.json}
     lang_region, speaker, quality = name.split("-", 2)
     lang = lang_region.split("_", 1)[0]
     base = f"{HF_BASE}/{lang}/{lang_region}/{speaker}/{quality}/{name}"
@@ -75,6 +81,13 @@ def _get_voice(name: str) -> PiperVoice:
     return _voices[name]
 
 
+def _render_wav(voice: PiperVoice, text: str) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        voice.synthesize(text, wav)
+    return buf.getvalue()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _get_voice(DEFAULT_VOICE)
@@ -83,11 +96,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="caal-tts", version="0.1.0", lifespan=lifespan)
-
-
-class SynthesizeRequest(BaseModel):
-    text: str
-    voice: str | None = None
 
 
 @app.get("/health")
@@ -100,22 +108,63 @@ def health() -> dict:
     }
 
 
+@app.get("/v1/models")
+def list_models() -> dict:
+    return {
+        "object": "list",
+        "data": [{"id": f"speaches-ai/piper-{DEFAULT_VOICE}", "object": "model"}],
+    }
+
+
+class OpenAISpeechRequest(BaseModel):
+    input: str
+    model: str | None = None
+    voice: str | None = None
+    response_format: str = "wav"
+    speed: float = 1.0
+
+
+@app.post("/v1/audio/speech")
+def openai_speech(req: OpenAISpeechRequest) -> Response:
+    if not req.input.strip():
+        raise HTTPException(status_code=400, detail="input is empty")
+    if req.response_format != "wav":
+        raise HTTPException(
+            status_code=400,
+            detail=f"only response_format=wav supported, got {req.response_format!r}",
+        )
+    # caal-agent's synthesizer.py sends the voice in both `model` and `voice`
+    # fields. Prefer `voice`; fall back to `model`; then env default.
+    voice_name = req.voice or req.model or DEFAULT_VOICE
+    try:
+        voice = _get_voice(voice_name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"voice unavailable: {voice_name} ({exc})")
+    return Response(
+        content=_render_wav(voice, req.input),
+        media_type="audio/wav",
+        headers={"X-Voice": _normalize(voice_name)},
+    )
+
+
+class SynthesizeRequest(BaseModel):
+    text: str
+    voice: str | None = None
+
+
 @app.post("/synthesize")
 def synthesize(req: SynthesizeRequest) -> Response:
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="text is empty")
-    name = req.voice or DEFAULT_VOICE
+    voice_name = req.voice or DEFAULT_VOICE
     try:
-        voice = _get_voice(name)
+        voice = _get_voice(voice_name)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"voice unavailable: {name} ({exc})")
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        voice.synthesize(req.text, wav)
+        raise HTTPException(status_code=400, detail=f"voice unavailable: {voice_name} ({exc})")
     return Response(
-        content=buf.getvalue(),
+        content=_render_wav(voice, req.text),
         media_type="audio/wav",
-        headers={"X-Voice": _normalize(name)},
+        headers={"X-Voice": _normalize(voice_name)},
     )
 
 

@@ -1,0 +1,8 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+faster-whisper==1.1.1
+# faster-whisper 1.0.x uses `requests` in its utils module but doesn't
+# declare it as a dependency. Pin it explicitly so the pip install doesn't
+# produce a runtime ImportError.
+requests==2.32.3

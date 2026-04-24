@@ -1,0 +1,96 @@
+# CAAL Slim - Lean Python Microservices (CPU-only)
+# =================================================
+#
+# Overrides docker-compose.yaml to replace the Speaches (STT + Piper TTS)
+# and Kokoro GPU containers with the lean caal-stt and caal-tts Python
+# microservices under `services/`. Runs entirely on CPU. Intended for
+# single-user deployments (SoniqueBar Option D) and CPU-only development.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.slim.yml up -d
+#
+# Agent env overrides:
+#   SPEACHES_URL -> http://caal-stt:8081 (OpenAI-compat /v1/audio/transcriptions)
+#   PIPER_URL    -> http://caal-tts:8082 (OpenAI-compat /v1/audio/speech)
+#   TTS_PROVIDER -> piper (routes all TTS through caal-tts; no Kokoro path)
+#   WHISPER_MODEL -> small.en (matches the default bundled in caal-stt)
+#
+# Existing speaches/kokoro services are disabled via the `disabled` profile
+# and the agent's depends_on is reset so it no longer waits for them.
+
+services:
+  # Disable the GPU services from the main compose so they do not try to start.
+  speaches:
+    profiles: ["disabled"]
+  speaches-init:
+    profiles: ["disabled"]
+  kokoro:
+    profiles: ["disabled"]
+
+  caal-stt:
+    build:
+      context: ./services/caal-stt
+    image: caal-stt:slim
+    container_name: caal-stt
+    environment:
+      - TZ=America/Chicago
+      - HOST=0.0.0.0
+      - PORT=8081
+      - STT_MODEL=small.en
+      - STT_DEVICE=cpu
+      - STT_COMPUTE=int8
+    volumes:
+      - caal-stt-cache:/app/cache
+    networks:
+      - caal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 90s  # first-run model download
+
+  caal-tts:
+    build:
+      context: ./services/caal-tts
+    image: caal-tts:slim
+    container_name: caal-tts
+    environment:
+      - TZ=America/Chicago
+      - HOST=0.0.0.0
+      - PORT=8082
+      - TTS_VOICE=en_US-ryan-high
+      - TTS_VOICE_DIR=/app/voices
+    volumes:
+      - caal-tts-voices:/app/voices
+    networks:
+      - caal-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8082/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s  # first-run voice download (~75 MB)
+
+  agent:
+    environment:
+      - SPEACHES_URL=http://caal-stt:8081
+      - PIPER_URL=http://caal-tts:8082
+      - TTS_PROVIDER=piper
+      - TTS_MODEL=piper
+      - WHISPER_MODEL=small.en
+    # Replace the upstream depends_on so the agent waits on caal-stt/caal-tts
+    # instead of the now-disabled speaches/kokoro services.
+    depends_on: !override
+      livekit:
+        condition: service_healthy
+      caal-stt:
+        condition: service_healthy
+      caal-tts:
+        condition: service_healthy
+
+volumes:
+  caal-stt-cache:
+  caal-tts-voices:

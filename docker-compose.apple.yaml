@@ -195,7 +195,7 @@ services:
         - NEXT_PUBLIC_PORCUPINE_ACCESS_KEY=${PORCUPINE_ACCESS_KEY:-}
     container_name: caal-frontend
     platform: linux/arm64
-    ports:
+    ports: !override
       - "3100:3000"
     environment:
       - LIVEKIT_URL=ws://livekit:7880

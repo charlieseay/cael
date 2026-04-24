@@ -7,6 +7,7 @@ from .helmsman_tool import HelmsmanTools
 from .lightrag_tool import LightRAGTools
 from .mcp_hub_tool import MCPHubTools
 from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config
+from .network_tool import NetworkTools
 from .memory_tool import (
     MEMORY_SHORT_TOOL_DEF,
     MemoryTools,
@@ -28,6 +29,7 @@ __all__ = [
     "load_mcp_config",
     "MCPHubTools",
     "MCPServerConfig",
+    "NetworkTools",
     "MEMORY_SHORT_TOOL_DEF",
     "MemoryTools",
     "WEB_SEARCH_TOOL_DEF",

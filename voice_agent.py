@@ -511,8 +511,9 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         tts_instance = SyncOpenAITTS(
             base_url=f"{PIPER_URL}/v1",
             model=piper_voice,
-            voice="default",  # Ignored by Piper but required by API
+            voice=piper_voice,  # caal-tts parses `voice` first; must be a real Piper voice name
             speed=TTS_SPEED,
+            response_format="wav",  # caal-tts (slim stack) only emits wav
         )
     else:
         # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess

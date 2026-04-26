@@ -123,6 +123,15 @@ DEFAULT_SETTINGS = {
     # Google AI API settings (API key required)
     "google_api_key": "",
     "google_model": "gemini-2.0-flash",
+    # Model router — always active, routes by complexity + observed latency.
+    # Simple commands go local-small; multi-step go local-medium; reasoning goes cloud.
+    # If a local tier is slow or Ollama is down, the router escalates automatically.
+    "router_simple_provider": "ollama",
+    "router_simple_model": "qwen3:4b",
+    "router_medium_provider": "ollama",
+    "router_medium_model": "qwen3:8b",
+    "router_complex_provider": "claude_cli",
+    "router_complex_model": "claude-haiku-4-5",
     # Assistant identity
     "assistant_avatar_filename": "",      # filename under AVATAR_DIR, empty = not set
     "client_connection_url": "",          # URL external clients (iOS/macOS) use to reach this server

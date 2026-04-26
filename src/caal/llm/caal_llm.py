@@ -21,9 +21,10 @@ from livekit.agents.types import (
     NotGivenOr,
 )
 
+from .model_router import ModelRouter, create_router_from_settings
 from .providers import LLMProvider, create_provider_from_settings
 
-__all__ = ["CAALLLM"]
+__all__ = ["CAALLLM", "ModelRouter", "create_router_from_settings"]
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +52,17 @@ class CAALLLM(llm.LLM):
         >>> session = AgentSession(llm=llm, ...)
     """
 
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProvider, router: ModelRouter | None = None) -> None:
         super().__init__()
         self._provider = provider
+        self._router = router  # Always set — None only if settings couldn't build one
 
+        s_model = router.config.simple_model if router else "n/a"
+        m_model = router.config.medium_model if router else "n/a"
         logger.debug(
-            f"CAALLLM initialized with {provider.provider_name}: {provider.model}"
+            f"CAALLLM: default={provider.provider_name}/{provider.model} "
+            f"router={'on' if router else 'off'} "
+            f"simple={s_model} medium={m_model}"
         )
 
     @classmethod
@@ -78,7 +84,8 @@ class CAALLLM(llm.LLM):
             >>> llm = CAALLLM.from_settings(settings)
         """
         provider = create_provider_from_settings(settings)
-        return cls(provider=provider)
+        router = create_router_from_settings(settings)
+        return cls(provider=provider, router=router)
 
     # === Provider access ===
 

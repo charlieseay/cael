@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["llm_node", "ToolDataCache", "LatencyTrace"]
 
+# Tool list cache TTL — re-discover from MCP servers every 10 minutes so
+# newly loaded servers and changed tool sets are picked up without a restart.
+_TOOL_CACHE_TTL = 600.0
+
 
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
@@ -150,6 +154,21 @@ async def llm_node(
             max_turns=max_turns,
         )
         trace.msg_build_ms = (time.perf_counter() - t) * 1000
+
+        # Route to the right provider. Check agent.llm._router (LiveKit path)
+        # then agent._model_router (ToolContext / REST path).
+        _router = getattr(getattr(agent, "llm", None), "_router", None)
+        if _router is None:
+            _router = getattr(agent, "_model_router", None)
+        _routed_tier: int | None = None
+        if _router is not None:
+            _last_user = next(
+                (m["content"] for m in reversed(messages)
+                 if m.get("role") == "user" and m.get("content")),
+                None,
+            )
+            if _last_user:
+                provider, _routed_tier = await _router.route(_last_user, default_provider=provider)
 
         # Discover tools from agent and MCP servers
         t = time.perf_counter()
@@ -305,9 +324,17 @@ async def llm_node(
         logger.info(f"LATENCY TRACE: {trace.summary()}")
         _store_trace(agent, trace)
 
+        # Feed observed latency back to the router so it can adapt tier selection
+        if _router is not None and _routed_tier is not None and trace.llm_rounds:
+            total_llm_ms = sum(trace.llm_rounds)
+            _router.record(_routed_tier, total_llm_ms, success=True)
+
     except Exception as e:
         trace.finish()
         logger.error(f"Error in llm_node: {e}", exc_info=True)
+        # Mark routed tier as failed so the router escalates next turn
+        if _router is not None and _routed_tier is not None:
+            _router.record(_routed_tier, 0, success=False)
         yield f"I encountered an error: {e}"
 
 
@@ -473,8 +500,13 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
             model-specific tool transformations (e.g. stripping descriptions
             for FunctionGemma)
     """
-    # Return cached tools if available
-    if hasattr(agent, "_llm_tools_cache") and agent._llm_tools_cache is not None:
+    # Return cached tools if still fresh
+    cache_age = time.time() - getattr(agent, "_llm_tools_cache_time", 0.0)
+    if (
+        hasattr(agent, "_llm_tools_cache")
+        and agent._llm_tools_cache is not None
+        and cache_age < _TOOL_CACHE_TTL
+    ):
         return agent._llm_tools_cache
 
     tools = []
@@ -560,6 +592,7 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
     # Cache tools on agent and return
     result = tools if tools else None
     agent._llm_tools_cache = result
+    agent._llm_tools_cache_time = time.time()
 
     return result
 
@@ -768,9 +801,16 @@ async def _execute_single_tool(agent, tool_name: str, arguments: dict) -> Any:
             server_name, actual_tool = "n8n", tool_name
 
         if server_name in agent._caal_mcp_servers:
-            server = agent._caal_mcp_servers[server_name]
+            # Reconnect if server has been idle past its TTL
+            if hasattr(agent, "ensure_server_live"):
+                server = await agent.ensure_server_live(server_name)
+            else:
+                server = agent._caal_mcp_servers[server_name]
             result = await _call_mcp_tool(server, actual_tool, arguments)
             if result is not None:
+                # Update last-used so the idle TTL resets on each successful call
+                if hasattr(agent, "touch_server"):
+                    agent.touch_server(server_name)
                 return result
 
     raise ValueError(f"Tool {tool_name} not found")

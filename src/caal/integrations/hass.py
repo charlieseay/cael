@@ -176,6 +176,9 @@ DOMAIN_ACTION_REMAP: dict[tuple[str, str], str] = {
     ("set_temperature", "media_player"): "set_volume",
 }
 
+# Script/automation domains — use HassRunActions intent
+_RUN_ACTIONS_DOMAINS = {"script", "automation"}
+
 # Intent mapping: (action, domain) -> (intent_name, extra_args)
 # Domain-specific mappings take priority over generic ones
 INTENT_MAP: dict[tuple[str, str | None], tuple[str, dict]] = {
@@ -189,6 +192,10 @@ INTENT_MAP: dict[tuple[str, str | None], tuple[str, dict]] = {
     ("set_brightness", "light"): ("HassLightSet", {}),
     # Climate-specific intents
     ("set_temperature", "climate"): ("HassClimateSetTemperature", {}),
+    # Script / automation intents
+    ("run_automation", None): ("HassRunActions", {}),
+    ("run_script", None): ("HassRunActions", {}),
+    ("run", None): ("HassRunActions", {}),
     # Generic intents (fallback when no domain-specific match)
     ("turn_on", None): ("HassTurnOn", {}),
     ("turn_off", None): ("HassTurnOff", {}),
@@ -301,19 +308,37 @@ def create_hass_tools(
         except Exception as e:
             logger.warning(f"Failed to refresh device cache: {e}")
 
+    async def _get_presence() -> str:
+        """Return presence state for all person entities."""
+        await _refresh_device_cache()
+        persons = [d for d in device_cache.devices.values() if d.domain == "person"]
+        if not persons:
+            # Cache may not have loaded person entities yet — force refresh
+            device_cache.last_updated = 0.0
+            await _refresh_device_cache()
+            persons = [d for d in device_cache.devices.values() if d.domain == "person"]
+        if not persons:
+            return "No presence information available"
+        return ", ".join(f"{p.name}: {p.state}" for p in persons)
+
     async def hass(action: str, target: str = None, value: int = None) -> str:
         """Control Home Assistant devices or get their status.
 
         Parameters:
-            action: status, turn_on, turn_off, toggle, open, close, stop,
-                   set_brightness, set_temperature, set_volume, volume_up,
-                   volume_down, mute, unmute, pause, play, next, previous
-            target: Device name in plain English (e.g., "office lamp").
-                   Optional for status (omit for all devices).
+            action: status, presence, turn_on, turn_off, toggle, open, close,
+                   stop, run_automation, run_script, set_brightness,
+                   set_temperature, set_volume, volume_up, volume_down,
+                   mute, unmute, pause, play, next, previous
+            target: Device, automation, or script name in plain English.
+                   Optional for status/presence (omit for all).
             value: brightness 0-100 (%), temperature in degrees, volume 0-100
         """
         if not hass_server or not hasattr(hass_server, "_client"):
             return "Home Assistant is not connected"
+
+        # Handle presence action (who's home)
+        if action == "presence":
+            return await _get_presence()
 
         # Handle status action (query device state)
         if action == "status":
@@ -504,14 +529,20 @@ def create_hass_tools(
                 "name": "hass",
                 "description": (
                     "Home Assistant — control smart home "
-                    "devices or check their status.\n"
+                    "devices, run automations, or check "
+                    "status and presence.\n"
                     "\n"
                     "Action routing:\n"
                     "  status — check device state.\n"
+                    "  presence — who is home (person "
+                    "entities).\n"
                     "  turn_on / turn_off / toggle — "
                     "power control.\n"
                     "  open / close / stop — covers, "
                     "blinds, garage.\n"
+                    "  run_automation / run_script / run "
+                    "— trigger an automation or script "
+                    "by name.\n"
                     "  set_brightness — light level "
                     "0-100%.\n"
                     "  set_temperature — thermostat.\n"
@@ -523,10 +554,11 @@ def create_hass_tools(
                     "playback control.\n"
                     "\n"
                     "Rules:\n"
-                    "- target is the device name in "
-                    "plain English.\n"
+                    "- target is the device or automation "
+                    "name in plain English.\n"
                     "- value is an integer: brightness "
-                    "0-100, temp in degrees, volume 0-100."
+                    "0-100, temp in degrees, volume 0-100.\n"
+                    "- presence and status need no target."
                 ),
                 "parameters": {
                     "type": "object",
@@ -534,11 +566,13 @@ def create_hass_tools(
                         "action": {
                             "type": "string",
                             "description": (
-                                "One of: status, turn_on, "
-                                "turn_off, toggle, open, "
-                                "close, stop, set_brightness,"
-                                " set_temperature, set_volume"
-                                ", volume_up, volume_down, "
+                                "One of: status, presence, "
+                                "turn_on, turn_off, toggle, "
+                                "open, close, stop, "
+                                "run_automation, run_script, "
+                                "run, set_brightness, "
+                                "set_temperature, set_volume, "
+                                "volume_up, volume_down, "
                                 "mute, unmute, pause, play, "
                                 "next, previous"
                             ),

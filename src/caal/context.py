@@ -12,8 +12,14 @@ via hasattr(). No actual LiveKit types are required.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+# Seconds of inactivity before a direct MCP server connection is closed and
+# re-opened on the next call. Keeps the connection pool lean between sessions
+# and ensures stale connections don't silently fail.
+_SERVER_IDLE_TTL = 300.0  # 5 minutes
 
 from .integrations import (
     MEMORY_SHORT_TOOL_DEF,
@@ -98,6 +104,7 @@ class ToolContext:
         self._tools: list = []  # No @function_tool methods
         self._mcp_configs = mcp_configs or []
         self._caal_mcp_servers: dict = {}
+        self._server_last_used: dict[str, float] = {}  # server_name -> last call timestamp
         self._n8n_workflow_tools: list[dict] = []
         self._n8n_workflow_name_map: dict[str, str] = {}
         self._n8n_base_url: str | None = None
@@ -106,6 +113,7 @@ class ToolContext:
         self._on_tool_status = on_tool_status
         self._on_usage = None
         self._llm_tools_cache: list[dict] | None = None
+        self._llm_tools_cache_time: float = 0.0
         self._mcp_initialized = False
 
         # Agent-level tools (memory_short, web_search)
@@ -173,6 +181,48 @@ class ToolContext:
             logger.error(f"MCP lazy init error: {e}", exc_info=True)
 
         self._mcp_initialized = True
+
+    async def ensure_server_live(self, server_name: str):
+        """Return a live server connection, reconnecting if idle too long.
+
+        Called by _execute_single_tool before making any MCP server call so
+        stale connections are refreshed transparently rather than failing.
+        """
+        from .integrations.mcp_loader import _init_single_mcp
+
+        server = self._caal_mcp_servers.get(server_name)
+        last_used = self._server_last_used.get(server_name, 0.0)
+        idle_s = time.time() - last_used
+
+        if server is not None and idle_s < _SERVER_IDLE_TTL:
+            return server
+
+        # Server is stale or not yet initialized — find its config and (re)init
+        config = next((c for c in self._mcp_configs if c.name == server_name), None)
+        if config is None:
+            return server  # Not in our config — return whatever we have
+
+        if server is not None:
+            logger.info(
+                f"MCP '{server_name}' idle {idle_s:.0f}s > {_SERVER_IDLE_TTL:.0f}s — reconnecting"
+            )
+
+        _, new_server, error = await _init_single_mcp(config)
+        if new_server:
+            self._caal_mcp_servers[server_name] = new_server
+            self._server_last_used[server_name] = time.time()
+            # Bust tool cache so the reconnected server's tools are re-discovered
+            self._llm_tools_cache = None
+            logger.info(f"MCP '{server_name}' reconnected")
+            return new_server
+
+        if error:
+            logger.error(f"MCP '{server_name}' reconnect failed: {error.error}")
+        return server  # Return stale connection as last resort
+
+    def touch_server(self, server_name: str) -> None:
+        """Update last-used timestamp after a successful tool call."""
+        self._server_last_used[server_name] = time.time()
 
     # -----------------------------------------------------------------
     # Agent-level tools (called via _execute_single_tool hasattr path)

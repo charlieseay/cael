@@ -44,6 +44,10 @@ from .ollama_provider import OllamaProvider
 from .openai_compatible_provider import OpenAICompatibleProvider
 from .openrouter_provider import OpenRouterProvider
 
+# Router lives in the parent llm package; re-export here so callers can do
+# `from caal.llm.providers import ModelRouter` without a relative-import dance.
+from ..model_router import ModelRouter, RouterConfig, create_router_from_settings, score_complexity
+
 __all__ = [
     "LLMProvider",
     "LLMResponse",
@@ -57,6 +61,10 @@ __all__ = [
     "GeminiCLIProvider",
     "GoogleProvider",
     "create_provider",
+    "ModelRouter",
+    "RouterConfig",
+    "create_router_from_settings",
+    "score_complexity",
 ]
 
 logger = logging.getLogger(__name__)

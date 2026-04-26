@@ -56,6 +56,7 @@ from caal.integrations import (  # noqa: E402
     MemoryTools,
     NetworkTools,
     WebSearchTools,
+    create_hass_rest_tools,
     create_hass_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
@@ -587,19 +588,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # ==========================================================================
 
-    # Create HASS tools only if Home Assistant is connected
+    # Create HASS tools — REST API takes priority when credentials are present,
+    # MCP-based integration is the fallback for the networked Docker stack.
     hass_tool_definitions = []
     hass_tool_callables = {}
-    hass_server = mcp_servers.get("home_assistant")
-    if hass_server:
-        # Detect tool prefix (some HA MCP servers use 'assist__' prefix)
-        hass_tool_prefix = await detect_hass_tool_prefix(hass_server)
-        if hass_tool_prefix:
-            logger.info(f"Home Assistant MCP uses '{hass_tool_prefix}' prefix")
-        hass_tool_definitions, hass_tool_callables = create_hass_tools(
-            hass_server, tool_prefix=hass_tool_prefix
-        )
-        logger.info("Home Assistant tools enabled: hass")
+    _ha_url = os.environ.get("HA_URL", "").strip()
+    _ha_token = os.environ.get("HA_TOKEN", "").strip()
+    if _ha_url and _ha_token:
+        hass_tool_definitions, hass_tool_callables = create_hass_rest_tools(_ha_url, _ha_token)
+        logger.info("Home Assistant tools enabled: REST (%s)", _ha_url)
+    else:
+        hass_server = mcp_servers.get("home_assistant")
+        if hass_server:
+            hass_tool_prefix = await detect_hass_tool_prefix(hass_server)
+            if hass_tool_prefix:
+                logger.info(f"Home Assistant MCP uses '{hass_tool_prefix}' prefix")
+            hass_tool_definitions, hass_tool_callables = create_hass_tools(
+                hass_server, tool_prefix=hass_tool_prefix
+            )
+            logger.info("Home Assistant tools enabled: MCP")
 
     # Initialize short-term memory (singleton, persists across restarts)
     short_term_memory = ShortTermMemory()

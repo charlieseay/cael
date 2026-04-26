@@ -3,6 +3,7 @@ MCP integrations for voice assistant.
 """
 
 from .hass import create_hass_tools, detect_hass_tool_prefix
+from .hass_rest import create_hass_rest_tools
 from .helmsman_tool import HelmsmanTools
 from .lightrag_tool import LightRAGTools
 from .mac_control_tool import MacControlTools
@@ -18,6 +19,7 @@ from .n8n import discover_n8n_workflows, execute_n8n_workflow
 from .web_search import WEB_SEARCH_TOOL_DEF, WebSearchTools, execute_web_search
 
 __all__ = [
+    "create_hass_rest_tools",
     "create_hass_tools",
     "detect_hass_tool_prefix",
     "discover_n8n_workflows",

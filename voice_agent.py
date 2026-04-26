@@ -51,6 +51,7 @@ from caal import CAALLLM  # noqa: E402
 from caal.integrations import (  # noqa: E402
     HelmsmanTools,
     LightRAGTools,
+    MacControlTools,
     MCPHubTools,
     MemoryTools,
     NetworkTools,
@@ -212,7 +213,7 @@ def load_prompt(language: str = "en") -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, NetworkTools, MemoryTools, WebSearchTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(

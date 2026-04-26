@@ -8,9 +8,12 @@ with 30-minute inactivity expiry.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 import uuid
+from pathlib import Path
 
 from ..llm import ToolDataCache
 
@@ -18,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 # Sessions expire after 30 minutes of inactivity
 SESSION_TTL_SECONDS = 30 * 60
+
+# The one canonical session ID — Cael's single continuous relationship with Charlie.
+# This session never expires and persists to disk across CAAL restarts.
+PERSISTENT_SESSION_ID = "sonique-main"
+
+# Conversation history is stored here
+_PERSIST_DIR = Path(os.getenv("CAAL_DATA_DIR", Path.home() / ".caal")) / "conversations"
 
 # Cleanup runs every 60 seconds
 CLEANUP_INTERVAL_SECONDS = 60
@@ -40,7 +50,7 @@ class ChatSession:
         self.last_activity = time.time()
 
     def add_message(self, role: str, content: str) -> None:
-        """Add a message and apply sliding window."""
+        """Add a message, apply sliding window, and persist if canonical."""
         self.messages.append({"role": role, "content": content})
         self.last_activity = time.time()
 
@@ -53,6 +63,9 @@ class ChatSession:
                 f"Session {self.session_id}: trimmed {trimmed} old messages"
             )
 
+        if self.session_id == PERSISTENT_SESSION_ID:
+            self._save_to_disk()
+
     def get_messages(self) -> list[dict]:
         """Return a copy of the message history."""
         return list(self.messages)
@@ -62,11 +75,43 @@ class ChatSession:
         self.messages.clear()
         self.tool_data_cache.clear()
         self.last_activity = time.time()
+        if self.session_id == PERSISTENT_SESSION_ID:
+            self._save_to_disk()
 
     @property
     def is_expired(self) -> bool:
-        """Check if session has exceeded the inactivity TTL."""
+        """Persistent session never expires; others use 30-min TTL."""
+        if self.session_id == PERSISTENT_SESSION_ID:
+            return False
         return (time.time() - self.last_activity) > SESSION_TTL_SECONDS
+
+    def _save_to_disk(self) -> None:
+        """Persist message history for the canonical session."""
+        try:
+            _PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+            path = _PERSIST_DIR / f"{self.session_id}.json"
+            path.write_text(
+                json.dumps({"messages": self.messages}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"Could not persist session {self.session_id}: {e}")
+
+    @classmethod
+    def load_from_disk(cls, session_id: str, max_turns: int = 20) -> "ChatSession":
+        """Load a persisted session from disk, or create a fresh one."""
+        session = cls(session_id=session_id, max_turns=max_turns)
+        path = _PERSIST_DIR / f"{session_id}.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                session.messages = data.get("messages", [])
+                logger.info(
+                    f"Loaded {len(session.messages)} messages for session {session_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not load session {session_id}: {e}")
+        return session
 
 
 class ChatSessionManager:
@@ -85,12 +130,8 @@ class ChatSessionManager:
     ) -> ChatSession:
         """Get an existing session or create a new one.
 
-        Args:
-            session_id: Session identifier. Auto-generated if None.
-            max_turns: Max conversation turns for new sessions.
-
-        Returns:
-            ChatSession instance with updated last_activity.
+        The canonical PERSISTENT_SESSION_ID is loaded from disk on first
+        access so conversation history survives CAAL restarts.
         """
         if session_id is None:
             session_id = str(uuid.uuid4())[:8]
@@ -100,9 +141,12 @@ class ChatSessionManager:
             session.last_activity = time.time()
             return session
 
-        session = ChatSession(session_id=session_id, max_turns=max_turns)
+        if session_id == PERSISTENT_SESSION_ID:
+            session = ChatSession.load_from_disk(session_id, max_turns=max_turns)
+        else:
+            session = ChatSession(session_id=session_id, max_turns=max_turns)
         self._sessions[session_id] = session
-        logger.info(f"Created chat session: {session_id}")
+        logger.info(f"Opened chat session: {session_id} ({len(session.messages)} messages)")
         return session
 
     def delete(self, session_id: str) -> bool:

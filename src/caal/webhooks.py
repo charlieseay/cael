@@ -2120,6 +2120,70 @@ async def get_assistant_avatar():
 
 
 # =============================================================================
+# Mac Actions API (SoniqueBar local system control)
+# =============================================================================
+
+class MacActionRequest(BaseModel):
+    action_type: str
+    params: dict
+    source: str = "voice"
+
+
+class MacActionCompleteRequest(BaseModel):
+    result: str | None = None
+    error: str | None = None
+
+
+class MacActionResponse(BaseModel):
+    id: str
+    action_type: str
+    params: dict
+    source: str
+    status: str
+    queued_at: float
+
+
+class MacActionCompleteResponse(BaseModel):
+    status: str
+    id: str
+
+
+@app.post("/api/mac-actions", status_code=201)
+async def queue_mac_action(req: MacActionRequest) -> MacActionResponse:
+    """Queue a local Mac action for SoniqueBar to execute."""
+    from .mac_actions import enqueue
+    action_id = enqueue(req.action_type, req.params, req.source)
+    return MacActionResponse(
+        id=action_id,
+        action_type=req.action_type,
+        params=req.params,
+        source=req.source,
+        status="pending",
+        queued_at=__import__("time").time(),
+    )
+
+
+@app.get("/api/mac-actions/pending")
+async def get_pending_mac_actions() -> list[MacActionResponse]:
+    """Return all pending Mac actions. SoniqueBar polls this."""
+    from .mac_actions import get_pending
+    return [MacActionResponse(**a) for a in get_pending()]
+
+
+@app.post("/api/mac-actions/{action_id}/complete")
+async def complete_mac_action(
+    action_id: str, req: MacActionCompleteRequest
+) -> MacActionCompleteResponse:
+    """Mark a Mac action as complete. Called by SoniqueBar after execution."""
+    from .mac_actions import complete
+    found = complete(action_id, result=req.result, error=req.error)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Action not found: {action_id}")
+    status = "error" if req.error else "done"
+    return MacActionCompleteResponse(status=status, id=action_id)
+
+
+# =============================================================================
 # Chat API
 # =============================================================================
 

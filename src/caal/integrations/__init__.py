@@ -5,6 +5,7 @@ MCP integrations for voice assistant.
 from .hass import create_hass_tools, detect_hass_tool_prefix
 from .helmsman_tool import HelmsmanTools
 from .lightrag_tool import LightRAGTools
+from .mac_control_tool import MacControlTools
 from .mcp_hub_tool import MCPHubTools
 from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config
 from .network_tool import NetworkTools
@@ -27,6 +28,7 @@ __all__ = [
     "initialize_mcp_servers",
     "LightRAGTools",
     "load_mcp_config",
+    "MacControlTools",
     "MCPHubTools",
     "MCPServerConfig",
     "NetworkTools",

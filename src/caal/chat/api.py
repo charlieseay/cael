@@ -23,7 +23,7 @@ import logging
 import os
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from .. import CAALLLM
@@ -33,7 +33,7 @@ from ..integrations import load_mcp_config
 from ..integrations.n8n import clear_caches as clear_n8n_caches
 from ..llm import llm_node
 from ..memory import ShortTermMemory
-from .session import ChatSession, ChatSessionManager
+from .session import PERSISTENT_SESSION_ID, ChatSession, ChatSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +473,90 @@ async def chat(req: ChatRequest) -> ChatResponse:
         session_id=session.session_id,
         debug=debug,
     )
+
+
+@router.post("/stream")
+async def chat_stream(req: ChatRequest) -> StreamingResponse:
+    """Same as POST /api/chat but streams tokens as Server-Sent Events.
+
+    Each event:  data: {"text": "<chunk>"}
+    Final event: data: [DONE]
+
+    SoniqueBar uses this for the keyboard chat window so text appears
+    in real-time as Cael responds.
+    """
+    await _ensure_initialized()
+    assert _session_manager is not None
+    assert _tool_context is not None
+    assert _llm is not None
+    assert _prompt is not None
+
+    sid = req.session_id
+    if sid is None and req.reuse_session:
+        latest = _session_manager.get_latest_session()
+        if latest is not None:
+            sid = latest.session_id
+
+    session = _session_manager.get_or_create(session_id=sid, max_turns=_max_turns)
+    session.add_message(role="user", content=req.text)
+
+    chat_ctx = ChatContext(
+        system_prompt=_prompt,
+        messages=session.get_messages(),
+    )
+
+    if _short_term_memory:
+        _short_term_memory.reload()
+
+    collected: list[str] = []
+
+    async def generate():
+        async with _request_lock:
+            try:
+                async for chunk in llm_node(
+                    agent=_tool_context,
+                    chat_ctx=chat_ctx,
+                    provider=_llm.provider_instance,
+                    tool_data_cache=session.tool_data_cache,
+                    short_term_memory=_short_term_memory,
+                    max_turns=_max_turns,
+                ):
+                    collected.append(chunk)
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                await asyncio.sleep(0)
+            except Exception as e:
+                logger.error(f"chat_stream error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        full_response = "".join(collected)
+        session.add_message(role="assistant", content=full_response)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Session-Id": session.session_id,
+        },
+    )
+
+
+@router.get("/history")
+async def chat_history(session_id: str = PERSISTENT_SESSION_ID) -> dict:  # type: ignore[assignment]
+    """Return the message history for a session.
+
+    Defaults to the canonical persistent session so SoniqueBar can load
+    the full conversation on chat window open.
+    """
+    await _ensure_initialized()
+    assert _session_manager is not None
+    session = _session_manager.get_or_create(session_id=session_id, max_turns=_max_turns)
+    return {
+        "session_id": session.session_id,
+        "messages": session.get_messages(),
+        "message_count": len(session.messages),
+    }
 
 
 @router.get("/sessions", response_model=SessionsResponse)

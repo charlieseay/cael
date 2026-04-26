@@ -41,19 +41,30 @@ _tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 # Known servers. Keep this in sync with ~/.config/mcp-proxy/config.json mcpServers keys.
 # This list is consulted by list_tools() to decide where to search.
 KNOWN_SERVERS: list[str] = [
-    "bench",      # USB / ESP32 hardware diagnostics
-    "berth",      # database schema
-    "lathe",      # file + document operations
-    "mooring",    # git + repo operations
-    "sounding",   # network diagnostics (Keel)
-    "stem",       # Apple Music (Sound)
-    "binnacle",   # macOS calendar + reminders
-    "bearing",    # project navigation
-    "homelab",    # homelab infrastructure control
-    "stripe",     # Stripe payments (read-only)
-    "ha",         # Home Assistant device control
-    "vault",      # Obsidian vault read/write
-    "github",     # GitHub repos, issues, PRs
+    "bench",       # USB / ESP32 hardware diagnostics
+    "berth",       # database schema
+    "lathe",       # file + document operations
+    "mooring",     # git + repo operations
+    "sounding",    # network diagnostics (Keel)
+    "stem",        # Apple Music (Sound)
+    "binnacle",    # macOS calendar + reminders
+    "bearing",     # project navigation
+    "homelab",     # homelab infrastructure control
+    "stripe",      # Stripe payments (read-only)
+    "ha",          # Home Assistant device control
+    "vault",       # Obsidian vault read/write
+    "github",      # GitHub repos, issues, PRs
+    "cloudflare",  # Cloudflare DNS, zones, Workers
+    "mem0",        # persistent semantic memory
+    "contacts",    # macOS Contacts read
+    "calendar",    # macOS Calendar + Reminders
+    "miniflux",    # RSS feed reader (Miniflux)
+    "portainer",   # Docker container management
+    "grafana",     # Grafana dashboards + alerts
+    "influxdb",    # InfluxDB metrics + write
+    "umami",       # Umami web analytics
+    "lightrag",    # vault semantic/graph RAG search
+    "resend",      # transactional email via Resend
 ]
 
 
@@ -124,7 +135,9 @@ class MCPHubTools:
         description. Then call `call_tool` with the right one.
 
         Known servers: bench, berth, lathe, mooring, sounding, stem, binnacle,
-        bearing, homelab, stripe, ha, vault, github.
+        bearing, homelab, stripe, ha, vault, github, cloudflare, mem0,
+        contacts, calendar, miniflux, portainer, grafana, influxdb, umami,
+        lightrag, resend.
 
         Args:
             search: Space-separated keywords. Broader is fine — "lights" will

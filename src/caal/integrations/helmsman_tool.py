@@ -34,9 +34,11 @@ Why these are direct tools (not routed through MCP hub):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import Counter
@@ -617,3 +619,492 @@ class HelmsmanTools:
         except Exception as e:
             logger.warning(f"capture_idea failed: {e}")
             return f"Could not save the idea: {e}"
+
+    @function_tool
+    async def dispatch_tasks_bulk(self, tasks_json: str) -> str:
+        """Dispatch multiple tasks in a single call from a JSON array.
+
+        Useful for bulk operations — e.g. "queue these 5 tasks" where the user
+        provides a JSON array of task objects. Each object must have: task, brief,
+        project, owner, effort. Dispatch them one by one and return a summary.
+
+        Args:
+            tasks_json: JSON string containing an array of task objects.
+                        Each object: {"task": "...", "brief": "...", "project": "...",
+                                      "owner": "...", "effort": "..."}
+
+        Returns:
+            Voice-friendly summary of how many tasks were queued and any failures.
+        """
+        logger.info("dispatch_tasks_bulk called")
+        try:
+            tasks = json.loads(tasks_json)
+        except json.JSONDecodeError as e:
+            return f"Invalid JSON: {e}"
+
+        if not isinstance(tasks, list):
+            return "tasks_json must be a JSON array, not a single object."
+
+        if not tasks:
+            return "No tasks provided."
+
+        queued = []
+        failed = []
+
+        for idx, task_obj in enumerate(tasks):
+            try:
+                task_title = task_obj.get("task", "")
+                brief = task_obj.get("brief", "")
+                project = task_obj.get("project", "General")
+                owner = task_obj.get("owner", "CLAUDE")
+                effort = task_obj.get("effort", "M")
+
+                if not task_title:
+                    failed.append(f"Task {idx+1}: missing 'task' field")
+                    continue
+
+                ok, task_num, msg = await _dispatch(
+                    task=task_title,
+                    brief=brief or task_title,
+                    owner=_normalize_owner(owner),
+                    project=project,
+                    effort=effort.upper() if effort else "M",
+                )
+                if ok:
+                    queued.append(task_num or idx + 1)
+                else:
+                    failed.append(f"Task {idx+1} ({task_title[:40]}): {msg}")
+            except Exception as e:
+                failed.append(f"Task {idx+1}: {e}")
+
+        summary = f"Queued {len(queued)} task"
+        if len(queued) != 1:
+            summary += "s"
+        summary += "."
+        if failed:
+            summary += f" {len(failed)} failed: {'; '.join(failed[:3])}"
+            if len(failed) > 3:
+                summary += f" and {len(failed) - 3} more."
+        return summary
+
+    @function_tool
+    async def dispatch_task_conditional(
+        self,
+        trigger_task_num: int,
+        task: str,
+        brief: str,
+        project: str = "General",
+        owner: str = "CLAUDE",
+        effort: str = "M",
+    ) -> str:
+        """Dispatch a task with a blocking dependency on another task.
+
+        Use when a task should only execute after a prerequisite task ships.
+        The new task's brief will include a note that it depends on the trigger task.
+
+        Args:
+            trigger_task_num: The task number that must ship before this one runs.
+            task: Short title of the new task.
+            brief: Full context for the new task.
+            project: Project name (default "General").
+            owner: Task owner (default "CLAUDE").
+            effort: Effort size S/M/L/XL (default "M").
+
+        Returns:
+            Confirmation with the new task number, or an error.
+        """
+        logger.info(f"dispatch_task_conditional: depends on #{trigger_task_num}")
+        enhanced_brief = (
+            f"{brief}\n\n"
+            f"NOTE: This task should only be actioned after task #{trigger_task_num} ships."
+        )
+        o = _normalize_owner(owner)
+        e = effort.upper().strip() if effort else "M"
+        if e not in ("S", "M", "L", "XL"):
+            e = "M"
+
+        ok, task_num, msg = await _dispatch(
+            task=task,
+            brief=enhanced_brief,
+            owner=o,
+            project=project or "General",
+            effort=e,
+        )
+        if ok:
+            ref = f"#{task_num} " if task_num else ""
+            return f"Task {ref}queued for {o} (depends on #{trigger_task_num})."
+        return f"Could not queue the task — {msg}"
+
+    @function_tool
+    async def edit_vault_note(self, vault_relative_path: str, new_content: str) -> str:
+        """Write new content to a vault note, replacing the entire file.
+
+        Vault root: /Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet/
+
+        Args:
+            vault_relative_path: Path relative to vault root (e.g. "Projects/MyProject/notes.md").
+                                 Must not contain ".." or be an absolute path.
+            new_content: The new file content.
+
+        Returns:
+            Success confirmation or error message.
+        """
+        logger.info(f"edit_vault_note: {vault_relative_path}")
+        if ".." in vault_relative_path or vault_relative_path.startswith("/"):
+            return "Path safety check failed: no absolute paths or '..' allowed."
+
+        vault_root = Path(
+            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+        )
+        full_path = vault_root / vault_relative_path
+
+        # Ensure the final path is within vault_root (prevent symlink escapes)
+        try:
+            full_path.resolve().relative_to(vault_root.resolve())
+        except ValueError:
+            return "Path resolves outside vault root — operation rejected."
+
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(new_content, encoding="utf-8")
+            return f"Wrote to {vault_relative_path}."
+        except Exception as e:
+            logger.warning(f"edit_vault_note failed: {e}")
+            return f"Could not write to vault: {e}"
+
+    @function_tool
+    async def append_to_vault_note(self, vault_relative_path: str, content: str) -> str:
+        """Append content to the end of a vault note.
+
+        Same vault root and path safety rules as edit_vault_note.
+
+        Args:
+            vault_relative_path: Path relative to vault root.
+            content: Text to append.
+
+        Returns:
+            Success confirmation or error message.
+        """
+        logger.info(f"append_to_vault_note: {vault_relative_path}")
+        if ".." in vault_relative_path or vault_relative_path.startswith("/"):
+            return "Path safety check failed: no absolute paths or '..' allowed."
+
+        vault_root = Path(
+            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+        )
+        full_path = vault_root / vault_relative_path
+
+        # Ensure the final path is within vault_root
+        try:
+            full_path.resolve().relative_to(vault_root.resolve())
+        except ValueError:
+            return "Path resolves outside vault root — operation rejected."
+
+        try:
+            if full_path.exists():
+                current = full_path.read_text(encoding="utf-8")
+                full_path.write_text(current + content, encoding="utf-8")
+            else:
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(content, encoding="utf-8")
+            return f"Appended to {vault_relative_path}."
+        except Exception as e:
+            logger.warning(f"append_to_vault_note failed: {e}")
+            return f"Could not append to vault: {e}"
+
+    @function_tool
+    async def create_calendar_event(
+        self,
+        title: str,
+        start_datetime: str,
+        end_datetime: str,
+        notes: str = "",
+    ) -> str:
+        """Create an Apple Calendar event via osascript.
+
+        Args:
+            title: Event title.
+            start_datetime: Start time in ISO8601 format (e.g. "2026-05-01T14:00:00").
+            end_datetime: End time in ISO8601 format.
+            notes: Optional event notes or description.
+
+        Returns:
+            Success or failure message.
+        """
+        logger.info(f"create_calendar_event: {title}")
+        try:
+            # Convert ISO8601 to a format osascript understands.
+            # AppleScript expects "Friday, May 1, 2026 at 2:00:00 PM"
+            start_dt = datetime.fromisoformat(start_datetime)
+            end_dt = datetime.fromisoformat(end_datetime)
+            start_str = start_dt.strftime("%A, %B %d, %Y at %I:%M:%S %p")
+            end_str = end_dt.strftime("%A, %B %d, %Y at %I:%M:%S %p")
+        except ValueError as e:
+            return f"Invalid datetime format: {e}"
+
+        # Build the AppleScript command
+        applescript = f"""
+tell application "Calendar"
+    tell calendar "Calendar"
+        make new event with properties {{summary:"{title}", start date:date "{start_str}", end date:date "{end_str}"}}
+    end tell
+end tell
+"""
+        if notes:
+            applescript = f"""
+tell application "Calendar"
+    tell calendar "Calendar"
+        set evt to make new event with properties {{summary:"{title}", start date:date "{start_str}", end date:date "{end_str}"}}
+        set description of evt to "{notes}"
+    end tell
+end tell
+"""
+
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return f"Created event: {title}."
+            else:
+                return f"Calendar error: {result.stderr or 'Unknown error'}"
+        except subprocess.TimeoutExpired:
+            return "Calendar command timed out."
+        except Exception as e:
+            logger.warning(f"create_calendar_event failed: {e}")
+            return f"Could not create calendar event: {e}"
+
+    @function_tool
+    async def get_calendar_events(self, days_ahead: int = 1) -> str:
+        """List calendar events for the next N days via osascript.
+
+        Args:
+            days_ahead: Number of days to look ahead (default 1).
+
+        Returns:
+            Voice-readable summary of upcoming events.
+        """
+        logger.info(f"get_calendar_events: next {days_ahead} days")
+        applescript = f"""
+set eventList to ""
+set now to current date
+set endDate to (now + {days_ahead} * days)
+tell application "Calendar"
+    repeat with evt in events of calendar "Calendar" whose start date is greater than or equal to now and whose start date is less than or equal to endDate
+        set summary to summary of evt
+        set startTime to start date of evt
+        set eventList to eventList & summary & " at " & (time string of startTime) & "; "
+    end repeat
+end tell
+eventList
+"""
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                events_text = result.stdout.strip()
+                if events_text:
+                    return f"Calendar events for the next {days_ahead} day(s): {events_text}"
+                else:
+                    return f"No calendar events in the next {days_ahead} day(s)."
+            else:
+                return f"Calendar error: {result.stderr or 'Unknown error'}"
+        except subprocess.TimeoutExpired:
+            return "Calendar command timed out."
+        except Exception as e:
+            logger.warning(f"get_calendar_events failed: {e}")
+            return f"Could not fetch calendar events: {e}"
+
+    @function_tool
+    async def send_email(self, to: str, subject: str, body: str) -> str:
+        """Send an email via Apple Mail using osascript.
+
+        Args:
+            to: Recipient email address.
+            subject: Email subject line.
+            body: Email body text.
+
+        Returns:
+            Success or failure message.
+        """
+        logger.info(f"send_email: to={to}, subject={subject[:50]}")
+        applescript = f"""
+tell application "Mail"
+    set newMessage to make new outgoing message with properties {{subject:"{subject}", content:"{body}", visible:true}}
+    tell newMessage
+        make new to recipient at end of to recipients with properties {{address:"{to}"}}
+        send
+    end tell
+end tell
+"""
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", applescript],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return f"Email sent to {to}."
+            else:
+                return f"Mail error: {result.stderr or 'Unknown error'}"
+        except subprocess.TimeoutExpired:
+            return "Mail command timed out."
+        except Exception as e:
+            logger.warning(f"send_email failed: {e}")
+            return f"Could not send email: {e}"
+
+    @function_tool
+    async def send_slack_message(self, channel: str, message: str) -> str:
+        """Send a message to a Slack channel via Slack API.
+
+        Requires /Volumes/data/secrets/slack_bot_token to exist.
+
+        Args:
+            channel: Channel name (with or without #).
+            message: Message text.
+
+        Returns:
+            Success confirmation or error message.
+        """
+        logger.info(f"send_slack_message: {channel}")
+        token_path = Path("/Volumes/data/secrets/slack_bot_token")
+        if not token_path.exists():
+            return "Slack not configured — no bot token found at expected path."
+
+        try:
+            token = token_path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.warning(f"Could not read slack token: {e}")
+            return f"Could not read Slack token: {e}"
+
+        # Ensure channel starts with #
+        if not channel.startswith("#"):
+            channel = f"#{channel}"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "channel": channel,
+            "text": message,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    json=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("ok"):
+                    return f"Message sent to {channel}."
+                else:
+                    return f"Slack rejected the message: {data.get('error', 'Unknown error')}"
+        except Exception as e:
+            logger.warning(f"send_slack_message failed: {e}")
+            return f"Could not send Slack message: {e}"
+
+    @function_tool
+    async def read_file_contents(self, path: str) -> str:
+        """Read and return the contents of a file.
+
+        Paths must be within ~/Projects/ or the vault root. Rejects absolute paths.
+
+        Args:
+            path: File path (relative or absolute within allowed roots).
+
+        Returns:
+            File contents or an error message.
+        """
+        logger.info(f"read_file_contents: {path}")
+        file_path = Path(path)
+
+        # Allow relative paths within ~/Projects or vault
+        if not file_path.is_absolute():
+            projects_root = Path.home() / "Projects"
+            file_path = projects_root / path
+
+        # Validate the resolved path is within allowed roots
+        vault_root = Path(
+            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+        )
+        projects_root = Path.home() / "Projects"
+
+        try:
+            resolved = file_path.resolve()
+            resolved.relative_to(projects_root.resolve())
+        except ValueError:
+            try:
+                resolved.relative_to(vault_root.resolve())
+            except ValueError:
+                return "File path must be within ~/Projects/ or the vault root."
+
+        try:
+            contents = file_path.read_text(encoding="utf-8")
+            return contents
+        except FileNotFoundError:
+            return f"File not found: {path}"
+        except Exception as e:
+            logger.warning(f"read_file_contents failed: {e}")
+            return f"Could not read file: {e}"
+
+    @function_tool
+    async def list_directory_contents(self, path: str) -> str:
+        """List files and directories in a directory.
+
+        Paths must be within ~/Projects/ or the vault root.
+
+        Args:
+            path: Directory path (relative or absolute within allowed roots).
+
+        Returns:
+            Voice-readable list of directory contents or an error message.
+        """
+        logger.info(f"list_directory_contents: {path}")
+        dir_path = Path(path)
+
+        # Allow relative paths within ~/Projects
+        if not dir_path.is_absolute():
+            projects_root = Path.home() / "Projects"
+            dir_path = projects_root / path
+
+        # Validate the resolved path
+        vault_root = Path(
+            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+        )
+        projects_root = Path.home() / "Projects"
+
+        try:
+            resolved = dir_path.resolve()
+            resolved.relative_to(projects_root.resolve())
+        except ValueError:
+            try:
+                resolved.relative_to(vault_root.resolve())
+            except ValueError:
+                return "Directory path must be within ~/Projects/ or the vault root."
+
+        try:
+            items = sorted(dir_path.iterdir())
+            if not items:
+                return f"Directory is empty: {path}"
+            file_list = ", ".join(item.name for item in items[:20])
+            summary = f"Contents of {path}: {file_list}"
+            if len(items) > 20:
+                summary += f" and {len(items) - 20} more."
+            return summary
+        except FileNotFoundError:
+            return f"Directory not found: {path}"
+        except Exception as e:
+            logger.warning(f"list_directory_contents failed: {e}")
+            return f"Could not list directory: {e}"

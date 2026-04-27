@@ -11,6 +11,7 @@ from __future__ import annotations
 from caal.integrations.helmsman_tool import (
     build_queue_status_response,
     build_single_task_response,
+    build_task_update_fields,
     filter_tasks,
 )
 
@@ -209,3 +210,66 @@ def test_empty_input_returns_zero_totals_and_clean_summary():
     assert out["by_owner"] == {}
     assert out["pending_tasks"] == []
     assert out["voice_summary"] == "There are 0 tasks."
+
+
+# ── build_task_update_fields ──────────────────────────────────────────────
+
+def test_update_fields_empty_when_no_args():
+    assert build_task_update_fields() == {}
+
+
+def test_update_fields_all_none_returns_empty():
+    assert build_task_update_fields(None, None, None, None, None) == {}
+
+
+def test_update_fields_task_truncated_to_120():
+    fields = build_task_update_fields(task="x" * 200)
+    assert len(fields["task"]) == 120
+
+
+def test_update_fields_brief_stored_as_brief_text_key():
+    fields = build_task_update_fields(brief="do the thing")
+    assert "brief_text" in fields
+    assert fields["brief_text"] == "do the thing"
+    assert "brief" not in fields
+
+
+def test_update_fields_owner_normalized():
+    # Alias → canonical
+    fields = build_task_update_fields(owner="casey")
+    assert fields["owner"] == "ASSAYER"
+
+
+def test_update_fields_unknown_owner_falls_back_to_claude():
+    fields = build_task_update_fields(owner="NOTAREALOWNER")
+    assert fields["owner"] == "CLAUDE"
+
+
+def test_update_fields_valid_effort_values_pass_through():
+    for e in ("S", "M", "L", "XL"):
+        fields = build_task_update_fields(effort=e)
+        assert fields["effort"] == e
+
+
+def test_update_fields_effort_is_uppercased():
+    fields = build_task_update_fields(effort="xl")
+    assert fields["effort"] == "XL"
+
+
+def test_update_fields_invalid_effort_becomes_m():
+    fields = build_task_update_fields(effort="HUGE")
+    assert fields["effort"] == "M"
+
+
+def test_update_fields_only_provided_keys_appear():
+    fields = build_task_update_fields(project="Hone")
+    assert list(fields.keys()) == ["project"]
+
+
+def test_update_fields_partial_update_multiple_fields():
+    fields = build_task_update_fields(task="New title", effort="L", owner="GEM")
+    assert fields["task"] == "New title"
+    assert fields["effort"] == "L"
+    assert fields["owner"] == "GEM"
+    assert "brief_text" not in fields
+    assert "project" not in fields

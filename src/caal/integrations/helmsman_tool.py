@@ -13,6 +13,10 @@ to a known, stable endpoint on the Mac Mini:
       Add concrete actionable work to the task queue. Use for "build X",
       "update Y", "investigate Z" type requests.
 
+  update_task(task_num, task, brief, owner, project, effort)
+      Modify fields on a task that is still in pending status. Prevents
+      duplicate tasks when the user wants to clarify or expand scope.
+
   get_task_queue_status(status_filter, owner_filter, task_num)
       Query the queue for counts, breakdowns, and pending tasks — or look up
       a single task by number. Returns a voice_summary for spoken output.
@@ -153,6 +157,60 @@ async def _dispatch(
     asyncio.create_task(_fire_delayed())
 
     return True, task_num if isinstance(task_num, int) else None, "Queued."
+
+
+async def _patch_task(task_num: int, fields: dict[str, Any]) -> tuple[bool, str]:
+    """PATCH a pending task's fields via the Helmsman DB REST service.
+
+    Returns (ok, message). Only fields present in *fields* are updated;
+    the service ignores keys it doesn't recognise. The DB service rejects
+    patches to tasks that are no longer pending — that error is surfaced
+    directly as the message.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.patch(
+                f"{HELMSMAN_DB_URL}/tasks/{task_num}",
+                json=fields,
+            )
+            resp.raise_for_status()
+            return True, "Updated."
+    except httpx.HTTPStatusError as e:
+        body = ""
+        try:
+            body = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        return False, body or f"Server rejected update ({e.response.status_code})."
+    except Exception as e:
+        return False, f"Update failed: {e}"
+
+
+def build_task_update_fields(
+    task: Optional[str] = None,
+    brief: Optional[str] = None,
+    owner: Optional[str] = None,
+    project: Optional[str] = None,
+    effort: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build the PATCH payload for update_task, applying validation/normalization.
+
+    Returns an empty dict when no fields were supplied (caller should reject).
+    Separated from the tool method so it can be tested without httpx.
+    """
+    fields: dict[str, Any] = {}
+    if task is not None:
+        fields["task"] = task[:120]
+    if brief is not None:
+        fields["brief_text"] = brief
+    if owner is not None:
+        fields["owner"] = _normalize_owner(owner)
+    if project is not None:
+        fields["project"] = project
+    if effort is not None:
+        e = effort.upper().strip()
+        fields["effort"] = e if e in ("S", "M", "L", "XL") else "M"
+    return fields
 
 
 def _slugify(text: str) -> str:
@@ -363,6 +421,49 @@ class HelmsmanTools:
             ref = f"#{task_num} " if task_num else ""
             return f"Task {ref}queued for {o}."
         return f"Could not queue the task — {msg}"
+
+    @function_tool
+    async def update_task(
+        self,
+        task_num: int,
+        task: Optional[str] = None,
+        brief: Optional[str] = None,
+        owner: Optional[str] = None,
+        project: Optional[str] = None,
+        effort: Optional[str] = None,
+    ) -> str:
+        """Modify fields on a task that is still in pending status.
+
+        Use instead of dispatch_task when the user wants to clarify, expand
+        scope, or correct details on a task they just described — anything that
+        would otherwise result in a duplicate. Only pass the fields you need to
+        change; unset fields are left as-is.
+
+        The DB service will reject this if the task is no longer pending (i.e.
+        already picked up or shipped). In that case tell the user and offer to
+        dispatch a follow-up task instead.
+
+        Args:
+            task_num: The integer task number returned by dispatch_task or report_issue.
+            task: Replacement short title (under 100 chars). Omit to keep current.
+            brief: Replacement full brief. Omit to keep current.
+            owner: New owner. Must be one of the accepted owner values.
+            project: New project name.
+            effort: New effort size — S, M, L, or XL.
+
+        Returns:
+            "Task #N updated." on success, or an explanation of why it failed.
+        """
+        fields = build_task_update_fields(task, brief, owner, project, effort)
+
+        if not fields:
+            return "Nothing to update — provide at least one field to change."
+
+        logger.info("update_task: #%d fields=%s", task_num, list(fields))
+        ok, msg = await _patch_task(task_num, fields)
+        if ok:
+            return f"Task #{task_num} updated."
+        return f"Could not update task #{task_num} — {msg}"
 
     @function_tool
     async def check_task(self, task_num: int) -> str:

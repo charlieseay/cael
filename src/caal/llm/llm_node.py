@@ -563,6 +563,12 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
             if server_name in ("n8n", "home_assistant"):
                 continue
 
+            # Lazy-connect on first tool discovery
+            if hasattr(agent, "ensure_server_live"):
+                connected = await agent.ensure_server_live(server_name)
+                if connected is not None:
+                    server = connected
+
             mcp_tools = await _get_mcp_tools(server)
             # Prefix tools with server name to avoid collisions
             for tool in mcp_tools:

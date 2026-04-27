@@ -5,10 +5,11 @@ MCP integrations for voice assistant.
 from .hass import create_hass_tools, detect_hass_tool_prefix
 from .hass_rest import create_hass_rest_tools
 from .helmsman_tool import HelmsmanTools
+from .ios_bridge_tools import iOSBridgeTools
 from .lightrag_tool import LightRAGTools
 from .mac_control_tool import MacControlTools
 from .mcp_hub_tool import MCPHubTools
-from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config
+from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config, prepare_lazy_mcp_servers
 from .network_tool import NetworkTools
 from .memory_tool import (
     MEMORY_SHORT_TOOL_DEF,
@@ -28,6 +29,8 @@ __all__ = [
     "execute_web_search",
     "HelmsmanTools",
     "initialize_mcp_servers",
+    "prepare_lazy_mcp_servers",
+    "iOSBridgeTools",
     "LightRAGTools",
     "load_mcp_config",
     "MacControlTools",

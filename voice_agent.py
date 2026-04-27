@@ -50,6 +50,7 @@ from livekit.plugins import openai, silero  # noqa: E402
 from caal import CAALLLM  # noqa: E402
 from caal.integrations import (  # noqa: E402
     HelmsmanTools,
+    iOSBridgeTools,
     LightRAGTools,
     MacControlTools,
     MCPHubTools,
@@ -60,9 +61,10 @@ from caal.integrations import (  # noqa: E402
     create_hass_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
-    initialize_mcp_servers,
+    prepare_lazy_mcp_servers,
     load_mcp_config,
 )
+from caal.integrations.mcp_loader import LazyMCPServer  # noqa: E402
 from caal.llm import ToolDataCache, llm_node  # noqa: E402
 from caal.memory import ShortTermMemory  # noqa: E402
 from caal.stt import WakeWordGatedSTT  # noqa: E402
@@ -214,7 +216,7 @@ def load_prompt(language: str = "en") -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, iOSBridgeTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(
@@ -231,6 +233,7 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools,
         hass_tool_definitions: list[dict] | None = None,
         hass_tool_callables: dict | None = None,
         short_term_memory: ShortTermMemory | None = None,
+        on_ios_calendar_query: callable | None = None,
     ) -> None:
         super().__init__(
             instructions=load_prompt(language=language),
@@ -256,12 +259,30 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools,
         # Callback for publishing tool status to frontend
         self._on_tool_status = on_tool_status
 
+        # Callback for routing iOS calendar queries through the LiveKit data channel
+        self._on_ios_calendar_query = on_ios_calendar_query
+
         # Context management: tool data cache and sliding window
         self._tool_data_cache = ToolDataCache(max_entries=tool_cache_size)
         self._max_turns = max_turns
 
         # Short-term memory for persistent context (MemoryTools mixin requirement)
         self._short_term_memory = short_term_memory
+
+    async def ensure_server_live(self, server_name: str) -> mcp.MCPServerHTTP | None:
+        """Return a connected MCPServerHTTP, lazy-connecting if needed."""
+        entry = self._caal_mcp_servers.get(server_name)
+        if entry is None:
+            return None
+        if isinstance(entry, LazyMCPServer):
+            return await entry.ensure_connected()
+        return entry  # already a real MCPServerHTTP
+
+    def touch_server(self, server_name: str) -> None:
+        """Update last-used timestamp after a successful tool call."""
+        entry = self._caal_mcp_servers.get(server_name)
+        if isinstance(entry, LazyMCPServer):
+            entry.touch()
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         """Custom LLM node using provider-agnostic interface."""
@@ -291,67 +312,48 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.debug(f"Joining room: {ctx.room.name}")
     await ctx.connect()
 
-    # Load MCP servers from config
-    mcp_servers = {}
-    mcp_errors = []
+    # Load MCP server configs and wrap in lazy loaders — no connections yet.
+    # n8n is connected immediately after so workflow discovery can proceed.
+    mcp_configs = []
+    mcp_servers: dict = {}
     try:
         mcp_configs = load_mcp_config()
-        mcp_servers, mcp_errors = await initialize_mcp_servers(mcp_configs)
+        mcp_servers = prepare_lazy_mcp_servers(mcp_configs)
     except Exception as e:
         logger.error(f"Failed to load MCP config: {e}")
-        mcp_configs = []  # Ensure mcp_configs is defined for later use
 
-    # Send MCP connection errors to frontend
-    if mcp_errors:
-        error_messages = []
-        for err in mcp_errors:
-            # Friendly names for known servers
-            if err.name == "n8n":
-                error_messages.append(
-                    "n8n enabled but could not connect"
-                    " - check URL and token in Settings"
-                )
-            elif err.name == "home_assistant":
-                error_messages.append(
-                    "Home Assistant enabled but could not connect"
-                    " - check URL and token in Settings"
-                )
-            else:
-                error_messages.append(f"MCP server '{err.name}' failed to connect: {err.error}")
-
-        # Send error to frontend via data channel
-        import json as json_module
-        payload = json_module.dumps({
-            "type": "mcp_error",
-            "errors": error_messages,
-        })
-        try:
-            await ctx.room.local_participant.publish_data(
-                payload.encode("utf-8"),
-                reliable=True,
-                topic="mcp_error",
-            )
-        except Exception as e:
-            logger.error(f"Failed to send MCP error to frontend: {e}")
-
-    # Discover n8n workflows (n8n uses webhook-based execution, not MCP tools)
+    # n8n needs an immediate connection for workflow tool discovery at startup.
+    # All other servers stay lazy and connect on first tool use.
     n8n_workflow_tools = []
     n8n_workflow_name_map = {}
     n8n_base_url = None
-    n8n_mcp = mcp_servers.get("n8n")
-    if n8n_mcp:
+    n8n_lazy = mcp_servers.get("n8n")
+    if n8n_lazy:
         try:
-            # Extract base URL from n8n MCP server config
             n8n_config = next((c for c in mcp_configs if c.name == "n8n"), None)
             if n8n_config:
-                # URL format: http://HOST:PORT/mcp-server/http
-                # Base URL: http://HOST:PORT
                 url_parts = n8n_config.url.rsplit("/", 2)
                 n8n_base_url = url_parts[0] if len(url_parts) >= 2 else n8n_config.url
 
-            n8n_workflow_tools, n8n_workflow_name_map = await discover_n8n_workflows(
-                n8n_mcp, n8n_base_url
-            )
+            n8n_mcp = await n8n_lazy.ensure_connected()
+            if n8n_mcp:
+                n8n_workflow_tools, n8n_workflow_name_map = await discover_n8n_workflows(
+                    n8n_mcp, n8n_base_url
+                )
+            else:
+                logger.warning("n8n MCP connect failed — workflow tools unavailable")
+                import json as json_module
+                try:
+                    await ctx.room.local_participant.publish_data(
+                        json_module.dumps({
+                            "type": "mcp_error",
+                            "errors": ["n8n enabled but could not connect — check URL and token in Settings"],
+                        }).encode("utf-8"),
+                        reliable=True,
+                        topic="mcp_error",
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Failed to discover n8n workflows: {e}")
 
@@ -558,6 +560,134 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     _session_ref = session
 
     # ==========================================================================
+    # iOS bridge — request/response over LiveKit data channel
+    # ==========================================================================
+
+    _pending_calendar_future: asyncio.Future | None = None
+    _pending_contacts_future: asyncio.Future | None = None
+    _pending_directions_future: asyncio.Future | None = None
+    _pending_location_future: asyncio.Future | None = None
+
+    async def _ios_calendar_query(start_date: str, end_date: str) -> str:
+        """Publish a calendar query to the iOS client and wait for the result."""
+        nonlocal _pending_calendar_future
+        import json
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        _pending_calendar_future = future
+
+        payload = json.dumps({"start_date": start_date, "end_date": end_date})
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload.encode("utf-8"),
+                reliable=True,
+                topic="request_ios_calendar",
+            )
+        except Exception as e:
+            _pending_calendar_future = None
+            return json.dumps({"error": f"Failed to request iOS calendar: {e}"})
+
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=5.0)
+            return json.dumps(result)
+        except asyncio.TimeoutError:
+            return json.dumps(
+                {"error": "iOS calendar query timed out — device may not be connected."}
+            )
+        finally:
+            _pending_calendar_future = None
+
+    async def _ios_contacts_query(name: str) -> str:
+        """Publish a contacts query to the iOS client and wait for the result."""
+        nonlocal _pending_contacts_future
+        import json
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        _pending_contacts_future = future
+
+        payload = json.dumps({"name": name})
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload.encode("utf-8"),
+                reliable=True,
+                topic="request_ios_contacts",
+            )
+        except Exception as e:
+            _pending_contacts_future = None
+            return json.dumps({"error": f"Failed to request iOS contacts: {e}"})
+
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=5.0)
+            return json.dumps(result)
+        except asyncio.TimeoutError:
+            return json.dumps(
+                {"error": "iOS contacts query timed out — device may not be connected."}
+            )
+        finally:
+            _pending_contacts_future = None
+
+    async def _ios_directions_query(destination: str, transport_type: str) -> str:
+        """Publish a directions query to the iOS client and wait for the result."""
+        nonlocal _pending_directions_future
+        import json
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        _pending_directions_future = future
+
+        payload = json.dumps({"destination": destination, "transport_type": transport_type})
+        try:
+            await ctx.room.local_participant.publish_data(
+                payload.encode("utf-8"),
+                reliable=True,
+                topic="request_ios_directions",
+            )
+        except Exception as e:
+            _pending_directions_future = None
+            return json.dumps({"error": f"Failed to request iOS directions: {e}"})
+
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=5.0)
+            return json.dumps(result)
+        except asyncio.TimeoutError:
+            return json.dumps(
+                {"error": "iOS directions query timed out — device may not be connected."}
+            )
+        finally:
+            _pending_directions_future = None
+
+    async def _ios_location_query() -> str:
+        """Publish a location query to the iOS client and wait for the result."""
+        nonlocal _pending_location_future
+        import json
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        _pending_location_future = future
+
+        try:
+            await ctx.room.local_participant.publish_data(
+                "{}".encode("utf-8"),
+                reliable=True,
+                topic="request_ios_location",
+            )
+        except Exception as e:
+            _pending_location_future = None
+            return json.dumps({"error": f"Failed to request iOS location: {e}"})
+
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=5.0)
+            return json.dumps(result)
+        except asyncio.TimeoutError:
+            return json.dumps(
+                {"error": "iOS location query timed out — device may not be connected."}
+            )
+        finally:
+            _pending_location_future = None
+
+    # ==========================================================================
     # Round-trip latency tracking (callbacks registered after assistant creation)
     # ==========================================================================
 
@@ -598,15 +728,17 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         hass_tool_definitions, hass_tool_callables = create_hass_rest_tools(_ha_url, _ha_token)
         logger.info("Home Assistant tools enabled: REST (%s)", _ha_url)
     else:
-        hass_server = mcp_servers.get("home_assistant")
-        if hass_server:
-            hass_tool_prefix = await detect_hass_tool_prefix(hass_server)
-            if hass_tool_prefix:
-                logger.info(f"Home Assistant MCP uses '{hass_tool_prefix}' prefix")
-            hass_tool_definitions, hass_tool_callables = create_hass_tools(
-                hass_server, tool_prefix=hass_tool_prefix
-            )
-            logger.info("Home Assistant tools enabled: MCP")
+        hass_lazy = mcp_servers.get("home_assistant")
+        if hass_lazy:
+            hass_server = await hass_lazy.ensure_connected() if isinstance(hass_lazy, LazyMCPServer) else hass_lazy
+            if hass_server:
+                hass_tool_prefix = await detect_hass_tool_prefix(hass_server)
+                if hass_tool_prefix:
+                    logger.info(f"Home Assistant MCP uses '{hass_tool_prefix}' prefix")
+                hass_tool_definitions, hass_tool_callables = create_hass_tools(
+                    hass_server, tool_prefix=hass_tool_prefix
+                )
+                logger.info("Home Assistant tools enabled: MCP")
 
     # Initialize short-term memory (singleton, persists across restarts)
     short_term_memory = ShortTermMemory()
@@ -630,7 +762,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         hass_tool_definitions=hass_tool_definitions,
         hass_tool_callables=hass_tool_callables,
         short_term_memory=short_term_memory,
+        on_ios_calendar_query=_ios_calendar_query,
     )
+    # Wire iOS callbacks to the mixin
+    assistant._on_ios_calendar_query = _ios_calendar_query
+    assistant._on_ios_contacts_query = _ios_contacts_query
+    assistant._on_ios_directions_query = _ios_directions_query
+    assistant._on_ios_location_query = _ios_location_query
     # Register latency callbacks now that assistant exists — closures capture
     # `assistant` directly instead of an indirect _ref variable.
     @session.on("user_input_transcribed")
@@ -677,6 +815,51 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     async def _handle_webhook_command(data: rtc.DataPacket) -> None:
         """Handle commands from webhook server via LiveKit data channel."""
+        # iOS query results — resolve pending futures so the tool can return results to the LLM.
+        if data.topic == "ios_calendar_result":
+            nonlocal _pending_calendar_future
+            if _pending_calendar_future and not _pending_calendar_future.done():
+                try:
+                    import json as _json
+                    payload = _json.loads(data.data.decode("utf-8"))
+                    _pending_calendar_future.set_result(payload)
+                except Exception as e:
+                    logger.warning(f"Failed to parse ios_calendar_result: {e}")
+            return
+
+        if data.topic == "ios_contacts_result":
+            nonlocal _pending_contacts_future
+            if _pending_contacts_future and not _pending_contacts_future.done():
+                try:
+                    import json as _json
+                    payload = _json.loads(data.data.decode("utf-8"))
+                    _pending_contacts_future.set_result(payload)
+                except Exception as e:
+                    logger.warning(f"Failed to parse ios_contacts_result: {e}")
+            return
+
+        if data.topic == "ios_directions_result":
+            nonlocal _pending_directions_future
+            if _pending_directions_future and not _pending_directions_future.done():
+                try:
+                    import json as _json
+                    payload = _json.loads(data.data.decode("utf-8"))
+                    _pending_directions_future.set_result(payload)
+                except Exception as e:
+                    logger.warning(f"Failed to parse ios_directions_result: {e}")
+            return
+
+        if data.topic == "ios_location_result":
+            nonlocal _pending_location_future
+            if _pending_location_future and not _pending_location_future.done():
+                try:
+                    import json as _json
+                    payload = _json.loads(data.data.decode("utf-8"))
+                    _pending_location_future.set_result(payload)
+                except Exception as e:
+                    logger.warning(f"Failed to parse ios_location_result: {e}")
+            return
+
         if data.topic != "webhook_command":
             return
 

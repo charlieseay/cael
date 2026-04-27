@@ -2,11 +2,16 @@
 
 Loads MCP server definitions from settings, environment variables, and optional JSON config file.
 Settings take priority, then env vars, then JSON file.
+
+Supports both eager initialization (initialize_mcp_servers) and lazy initialization
+(prepare_lazy_mcp_servers + LazyMCPServer) where servers connect on first tool use.
 """
 
+import asyncio
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -257,3 +262,86 @@ async def initialize_mcp_servers(
             errors.append(error)
 
     return servers, errors
+
+
+# ── Lazy MCP server ───────────────────────────────────────────────────────────
+
+class LazyMCPServer:
+    """MCP server that connects on first tool use, not at agent startup.
+
+    Keeps the connection warm after first use. Callers should use
+    ensure_connected() to get the live MCPServerHTTP instance before
+    interacting with _client.
+    """
+
+    IDLE_TTL = 300.0  # disconnect-eligible after 5 min with no tool calls
+
+    def __init__(self, config: MCPServerConfig) -> None:
+        self._config = config
+        self._server: mcp.MCPServerHTTP | None = None
+        self._lock: asyncio.Lock | None = None
+        self._last_used: float = 0.0
+
+    @property
+    def name(self) -> str:
+        return self._config.name
+
+    @property
+    def is_connected(self) -> bool:
+        return self._server is not None
+
+    @property
+    def _client(self):
+        """Expose the underlying MCP client — None if not yet connected.
+
+        llm_node checks `server._client` before calling list_tools/call_tool.
+        Returning None causes it to skip this server and try again next turn
+        after ensure_connected() has been called via ensure_server_live().
+        """
+        return self._server._client if self._server else None
+
+    def touch(self) -> None:
+        """Update last-used timestamp. Call after each successful tool use."""
+        self._last_used = time.time()
+
+    def is_idle(self) -> bool:
+        """True when connected but no tool calls in the last IDLE_TTL seconds."""
+        return self._server is not None and (time.time() - self._last_used) > self.IDLE_TTL
+
+    async def ensure_connected(self) -> mcp.MCPServerHTTP | None:
+        """Connect if not already connected. Returns the live MCPServerHTTP or None on failure."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+
+        async with self._lock:
+            if self._server is None:
+                logger.info(f"LazyMCPServer: connecting {self._config.name} on first use")
+                _, server, error = await _init_single_mcp(self._config)
+                if error:
+                    logger.error(
+                        f"LazyMCPServer: {self._config.name} failed to connect: {error.error}"
+                    )
+                    return None
+                self._server = server
+                logger.info(f"LazyMCPServer: {self._config.name} connected")
+
+            self._last_used = time.time()
+            return self._server
+
+
+def prepare_lazy_mcp_servers(configs: list[MCPServerConfig]) -> dict[str, LazyMCPServer]:
+    """Wrap configs in LazyMCPServer objects — no connections made at this point.
+
+    Servers connect on first tool use. Use this instead of initialize_mcp_servers
+    when you want fast agent startup and don't need tools available at boot.
+
+    For servers that need an immediate connection (e.g., n8n for workflow discovery),
+    call ensure_connected() explicitly after this returns.
+    """
+    servers = {c.name: LazyMCPServer(c) for c in configs}
+    if servers:
+        logger.info(
+            f"Prepared {len(servers)} lazy MCP server(s): {list(servers)}"
+            " — will connect on first tool use"
+        )
+    return servers

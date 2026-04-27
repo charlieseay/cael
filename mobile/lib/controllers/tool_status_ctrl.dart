@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' as sdk;
@@ -35,7 +36,8 @@ class ToolStatus {
   String toString() => 'ToolStatus(toolUsed: $toolUsed, toolNames: $toolNames)';
 }
 
-/// Controller that listens for tool_status data packets from the backend.
+/// Controller that listens for tool_status data packets from the backend
+/// and handles iOS-specific tool dispatch (Siri intents, calendar, messages).
 class ToolStatusCtrl extends ChangeNotifier {
   final sdk.Room room;
   late final sdk.EventsListener<sdk.RoomEvent> _listener;
@@ -52,7 +54,32 @@ class ToolStatusCtrl extends ChangeNotifier {
   }
 
   void _handleDataReceived(sdk.DataReceivedEvent event) {
-    // Only handle tool_status messages
+    // Backend requesting a calendar query — respond with EKEventStore data.
+    // This is the response side of the query_ios_calendar request/response
+    // pattern; it runs independently of the tool_status indicator.
+    if (event.topic == 'request_ios_calendar') {
+      unawaited(_handleCalendarRequest(event.data));
+      return;
+    }
+
+    // Contacts query request/response
+    if (event.topic == 'request_ios_contacts') {
+      unawaited(_handleContactsRequest(event.data));
+      return;
+    }
+
+    // Directions query request/response
+    if (event.topic == 'request_ios_directions') {
+      unawaited(_handleDirectionsRequest(event.data));
+      return;
+    }
+
+    // Location query request/response
+    if (event.topic == 'request_ios_location') {
+      unawaited(_handleLocationRequest(event.data));
+      return;
+    }
+
     if (event.topic != 'tool_status') return;
 
     try {
@@ -63,6 +90,133 @@ class ToolStatusCtrl extends ChangeNotifier {
       unawaited(_dispatchSiriIntentIfRequested(_status));
     } catch (error) {
       debugPrint('[ToolStatusCtrl] Failed to parse tool status: $error');
+    }
+  }
+
+  /// Respond to a `request_ios_calendar` packet from the backend.
+  ///
+  /// Queries EKEventStore on-device, then publishes the result back on the
+  /// `ios_calendar_result` topic so the backend's [query_ios_calendar] tool
+  /// can resolve and return event data to the LLM.
+  Future<void> _handleCalendarRequest(Uint8List data) async {
+    if (!SiriIntentBridge.isAvailable) return;
+
+    try {
+      final params = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+      final startStr = params['start_date'] as String?;
+      final endStr = params['end_date'] as String?;
+
+      final result = await SiriIntentBridge.dispatchCalendarQuery(
+        startDate: (startStr?.isNotEmpty == true) ? DateTime.tryParse(startStr!) : null,
+        endDate: (endStr?.isNotEmpty == true) ? DateTime.tryParse(endStr!) : null,
+      );
+
+      final payload = utf8.encode(jsonEncode({
+        'success': result.success,
+        'message': result.message,
+        'events': result.events,
+      }));
+
+      await room.localParticipant?.publishData(
+        payload,
+        options: const sdk.DataPublishOptions(
+          reliable: true,
+          topic: 'ios_calendar_result',
+        ),
+      );
+
+      _setExecutionMessage(result.message);
+    } catch (error) {
+      debugPrint('[ToolStatusCtrl] Calendar request failed: $error');
+    }
+  }
+
+  /// Respond to a `request_ios_contacts` packet from the backend.
+  Future<void> _handleContactsRequest(Uint8List data) async {
+    if (!SiriIntentBridge.isAvailable) return;
+
+    try {
+      final params = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+      final name = params['name'] as String? ?? '';
+
+      final result = await SiriIntentBridge.queryContacts(name: name);
+
+      final payload = utf8.encode(jsonEncode({
+        'success': result.success,
+        'message': result.message,
+      }));
+
+      await room.localParticipant?.publishData(
+        payload,
+        options: const sdk.DataPublishOptions(
+          reliable: true,
+          topic: 'ios_contacts_result',
+        ),
+      );
+
+      _setExecutionMessage(result.message);
+    } catch (error) {
+      debugPrint('[ToolStatusCtrl] Contacts request failed: $error');
+    }
+  }
+
+  /// Respond to a `request_ios_directions` packet from the backend.
+  Future<void> _handleDirectionsRequest(Uint8List data) async {
+    if (!SiriIntentBridge.isAvailable) return;
+
+    try {
+      final params = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
+      final destination = params['destination'] as String? ?? '';
+      final transportType = params['transport_type'] as String? ?? 'driving';
+
+      final result = await SiriIntentBridge.queryDirections(
+        destination: destination,
+        transportType: transportType,
+      );
+
+      final payload = utf8.encode(jsonEncode({
+        'success': result.success,
+        'message': result.message,
+        'destinationName': result.success ? (result.message.contains('Directions') ? destination : null) : null,
+      }));
+
+      await room.localParticipant?.publishData(
+        payload,
+        options: const sdk.DataPublishOptions(
+          reliable: true,
+          topic: 'ios_directions_result',
+        ),
+      );
+
+      _setExecutionMessage(result.message);
+    } catch (error) {
+      debugPrint('[ToolStatusCtrl] Directions request failed: $error');
+    }
+  }
+
+  /// Respond to a `request_ios_location` packet from the backend.
+  Future<void> _handleLocationRequest(Uint8List data) async {
+    if (!SiriIntentBridge.isAvailable) return;
+
+    try {
+      final result = await SiriIntentBridge.queryLocation();
+
+      final payload = utf8.encode(jsonEncode({
+        'success': result.success,
+        'message': result.message,
+      }));
+
+      await room.localParticipant?.publishData(
+        payload,
+        options: const sdk.DataPublishOptions(
+          reliable: true,
+          topic: 'ios_location_result',
+        ),
+      );
+
+      _setExecutionMessage(result.message);
+    } catch (error) {
+      debugPrint('[ToolStatusCtrl] Location request failed: $error');
     }
   }
 
@@ -81,7 +235,16 @@ class ToolStatusCtrl extends ChangeNotifier {
       } else if (_isNavigationTool(toolName, toolParams)) {
         _handledIntentFingerprints.add(fingerprint);
         await _dispatchNavigation(toolParams);
+      } else if (_isMessageTool(toolName, toolParams)) {
+        _handledIntentFingerprints.add(fingerprint);
+        await _dispatchMessage(toolParams);
+      } else if (_isPhoneCallTool(toolName, toolParams)) {
+        _handledIntentFingerprints.add(fingerprint);
+        await _dispatchPhoneCall(toolParams);
       }
+      // Note: query_ios_calendar, query_ios_contacts, query_ios_directions,
+      // and query_ios_location are handled via request/response data channels,
+      // not through tool_status detection.
     }
   }
 
@@ -95,6 +258,41 @@ class ToolStatusCtrl extends ChangeNotifier {
         toolName.contains('maps') ||
         params.containsKey('destination') ||
         params.containsKey('address');
+  }
+
+  bool _isMessageTool(String toolName, Map<String, dynamic> params) {
+    return toolName.contains('message') ||
+        toolName.contains('sms') ||
+        toolName.contains('imessage') ||
+        toolName.contains('text') && (params.containsKey('recipient') || params.containsKey('to')) ||
+        params.containsKey('recipient');
+  }
+
+  bool _isPhoneCallTool(String toolName, Map<String, dynamic> params) {
+    return toolName.contains('phone') ||
+        toolName.contains('call') ||
+        toolName.contains('dial') ||
+        params.containsKey('phone_number') ||
+        params.containsKey('phoneNumber');
+  }
+
+  Future<void> _dispatchMessage(Map<String, dynamic> params) async {
+    final recipient = (params['recipient'] ?? params['to'] ?? params['phone'] ?? params['contact'] ?? '')
+        .toString()
+        .trim();
+    final body = (params['body'] ?? params['message'] ?? params['text'] ?? '').toString().trim();
+
+    if (recipient.isEmpty) {
+      _setExecutionMessage('Message request skipped: missing recipient.');
+      return;
+    }
+    if (body.isEmpty) {
+      _setExecutionMessage('Message request skipped: missing body.');
+      return;
+    }
+
+    final result = await SiriIntentBridge.dispatchMessage(recipient: recipient, body: body);
+    _setExecutionMessage(result.message);
   }
 
   Future<void> _dispatchReminder(Map<String, dynamic> params) async {
@@ -126,6 +324,19 @@ class ToolStatusCtrl extends ChangeNotifier {
     }
 
     final result = await SiriIntentBridge.dispatchNavigation(destination: destination);
+    _setExecutionMessage(result.message);
+  }
+
+  Future<void> _dispatchPhoneCall(Map<String, dynamic> params) async {
+    final phoneNumber = (params['phone_number'] ?? params['phoneNumber'] ?? params['number'] ?? '')
+        .toString()
+        .trim();
+    if (phoneNumber.isEmpty) {
+      _setExecutionMessage('Phone call request skipped: missing phone number.');
+      return;
+    }
+
+    final result = await SiriIntentBridge.makePhoneCall(phoneNumber: phoneNumber);
     _setExecutionMessage(result.message);
   }
 

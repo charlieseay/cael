@@ -32,10 +32,20 @@
 	<string>CAAL uses your camera for video calls</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>CAAL needs microphone access for voice conversations</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>CAAL reads your calendar events to answer questions during conversation.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>CAAL reads your calendar events to answer scheduling questions during conversation.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Sonique needs access to your contacts to look up people you ask about.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>CAAL creates reminders from your voice conversation.</string>
+	<string>Sonique uses reminders to help you remember things.</string>
 	<key>NSSiriUsageDescription</key>
-	<string>CAAL uses Siri intents to execute on-device actions during conversation.</string>
+	<string>Sonique uses Siri intents to execute on-device actions during conversation.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sonique needs your location to answer distance and navigation questions.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Sonique needs your location to answer distance and navigation questions.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

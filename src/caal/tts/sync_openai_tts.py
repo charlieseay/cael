@@ -82,8 +82,19 @@ class SyncChunkedStream(tts.ChunkedStream):
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._tts: SyncOpenAITTS = tts
 
-    def _sync_request(self, text: str, opts: _TTSOptions, timeout: float) -> bytes:
-        """Make synchronous TTS request."""
+    def _fetch_chunks(
+        self,
+        text: str,
+        opts: _TTSOptions,
+        timeout: float,
+        out_q: asyncio.Queue,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Run in thread pool: stream HTTP response chunks into an asyncio queue.
+
+        Puts chunk bytes as they arrive, then None as a sentinel when done.
+        Puts an Exception instance on error (before the sentinel).
+        """
         url = f"{opts.base_url}/audio/speech"
         headers = {
             "Authorization": f"Bearer {opts.api_key}",
@@ -99,58 +110,78 @@ class SyncChunkedStream(tts.ChunkedStream):
 
         logger.debug(f"Requesting: {url} with model={opts.model}, voice={opts.voice}")
 
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-            stream=True,
-        )
-
-        if response.status_code != 200:
-            raise APIStatusError(
-                f"TTS request failed: {response.text}",
-                status_code=response.status_code,
-                request_id="",
-                body=response.text,
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+                stream=True,
             )
 
-        # Collect all chunks
-        chunks = list(response.iter_content(chunk_size=8192))
-        audio_data = b"".join(chunks)
+            if response.status_code != 200:
+                exc = APIStatusError(
+                    f"TTS request failed: {response.text}",
+                    status_code=response.status_code,
+                    request_id="",
+                    body=response.text,
+                )
+                loop.call_soon_threadsafe(out_q.put_nowait, exc)
+                return
 
-        logger.debug(f"Received {len(audio_data)} bytes of audio")
-        return audio_data
+            total = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    total += len(chunk)
+                    loop.call_soon_threadsafe(out_q.put_nowait, chunk)
+            logger.debug(f"Streamed {total} bytes of audio")
+
+        except requests.exceptions.Timeout:
+            loop.call_soon_threadsafe(
+                out_q.put_nowait, APIConnectionError("TTS request timed out")
+            )
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error: {e}")
+            loop.call_soon_threadsafe(
+                out_q.put_nowait, APIConnectionError(f"TTS connection failed: {e}")
+            )
+        except Exception as e:
+            logger.error(f"{type(e).__name__}: {e}")
+            loop.call_soon_threadsafe(
+                out_q.put_nowait, APIConnectionError(str(e))
+            )
+        finally:
+            loop.call_soon_threadsafe(out_q.put_nowait, None)  # sentinel
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
-        """Run TTS synthesis using thread executor."""
+        """Stream TTS synthesis: thread feeds chunks into asyncio queue as they arrive."""
         loop = asyncio.get_running_loop()
         opts = self._tts._opts
         timeout = max(30.0, self._conn_options.timeout)
 
+        out_q: asyncio.Queue = asyncio.Queue()
+
+        thread_future = loop.run_in_executor(
+            self._tts._executor,
+            partial(self._fetch_chunks, self.input_text, opts, timeout, out_q, loop),
+        )
+
+        output_emitter.initialize(
+            request_id="sync-tts",
+            sample_rate=SAMPLE_RATE,
+            num_channels=NUM_CHANNELS,
+            mime_type=f"audio/{opts.response_format}",
+        )
+
         try:
-            # Run synchronous request in thread pool
-            audio_data = await loop.run_in_executor(
-                self._tts._executor,
-                partial(self._sync_request, self.input_text, opts, timeout),
-            )
+            while True:
+                item = await out_q.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                output_emitter.push(item)
 
-            output_emitter.initialize(
-                request_id="sync-tts",
-                sample_rate=SAMPLE_RATE,
-                num_channels=NUM_CHANNELS,
-                mime_type=f"audio/{opts.response_format}",
-            )
-
-            # Push all audio data
-            output_emitter.push(audio_data)
             output_emitter.flush()
-
-        except requests.exceptions.Timeout:
-            raise APIConnectionError("TTS request timed out") from None
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"Connection error: {e}")
-            raise APIConnectionError(f"TTS connection failed: {e}") from None
-        except Exception as e:
-            logger.error(f"{type(e).__name__}: {e}")
-            raise APIConnectionError(str(e)) from e
+        finally:
+            await thread_future

@@ -99,6 +99,12 @@ logging.getLogger("livekit.agents.tts").setLevel(logging.ERROR)  # Suppress "no 
 logging.getLogger("livekit.agents.voice").setLevel(logging.WARNING)
 logging.getLogger("livekit.plugins.openai.tts").setLevel(logging.WARNING)
 
+# Per-process guardrails to avoid overlapping room jobs during reconnect churn.
+_ROOM_GUARD_LOCK = asyncio.Lock()
+_ACTIVE_ROOMS: set[str] = set()
+_DRAINING_ROOMS: set[str] = set()
+_ROOM_GUARD_WAIT_SECONDS = 6.0
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -303,6 +309,19 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools,
 
 async def entrypoint(ctx: agents.JobContext) -> None:
     """Main entrypoint for the voice agent."""
+    room_name = ctx.room.name
+    acquire_deadline = time.monotonic() + _ROOM_GUARD_WAIT_SECONDS
+    while True:
+        async with _ROOM_GUARD_LOCK:
+            busy = room_name in _ACTIVE_ROOMS or room_name in _DRAINING_ROOMS
+            if not busy:
+                _ACTIVE_ROOMS.add(room_name)
+                break
+        if time.monotonic() >= acquire_deadline:
+            logger.warning(f"Room {room_name} still draining; dropping overlapping job")
+            return
+        await asyncio.sleep(0.25)
+
     # Note: Webhook server is started in background thread at agent startup (main block)
     # This ensures /setup/status is available before users connect
 
@@ -917,27 +936,69 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         asyncio.create_task(_handle_webhook_command(data))
 
     # Start session AFTER handlers are registered
-    await session.start(
-        room=ctx.room,
-        agent=assistant,
-    )
+    async def _teardown_session() -> None:
+        # Resolve any pending iOS bridge callers before we tear the room down.
+        for pending in (
+            _pending_calendar_future,
+            _pending_contacts_future,
+            _pending_directions_future,
+            _pending_location_future,
+        ):
+            if pending and not pending.done():
+                pending.cancel()
 
-    # Brief pause so the audio channel is fully open before speaking — prevents first word cutoff
-    await asyncio.sleep(0.8)
+        # Ensure audio pipeline and room transport are closed explicitly. Without
+        # this, worker subprocesses can survive past room close and pile up.
+        for method_name in ("aclose", "close", "shutdown"):
+            method = getattr(session, method_name, None)
+            if method is None:
+                continue
+            try:
+                maybe_result = method()
+                if asyncio.iscoroutine(maybe_result):
+                    await asyncio.wait_for(maybe_result, timeout=5.0)
+                break
+            except Exception as e:
+                logger.warning(f"session.{method_name} cleanup failed: {e}")
 
-    # First-ever session gets the full intro; subsequent sessions get a short ready signal
-    agent_name = settings_module.get_setting("agent_name", "Cal")
-    first_launch = not settings_module.get_setting("first_launch_completed", False)
-    if first_launch:
-        await session.say(f"Hey, I'm {agent_name}. I'm your voice assistant — just talk and I'll listen. What can I help you with?")
-        settings_module.save_settings({"first_launch_completed": True})
-    else:
-        await session.say(f"{agent_name} is online.")
+        try:
+            room_disconnect = ctx.room.disconnect()
+            if asyncio.iscoroutine(room_disconnect):
+                await asyncio.wait_for(room_disconnect, timeout=5.0)
+        except Exception as e:
+            logger.warning(f"room disconnect cleanup failed: {e}")
 
-    logger.info("Agent ready - listening for speech...")
+    try:
+        await session.start(
+            room=ctx.room,
+            agent=assistant,
+        )
 
-    # Wait until session closes (room disconnects, etc.)
-    await close_event.wait()
+        # Brief pause so the audio channel is fully open before speaking — prevents first word cutoff
+        await asyncio.sleep(0.8)
+
+        # First-ever session gets the full intro; subsequent sessions get a short ready signal
+        agent_name = settings_module.get_setting("agent_name", "Cal")
+        first_launch = not settings_module.get_setting("first_launch_completed", False)
+        if first_launch:
+            await session.say(f"Hey, I'm {agent_name}. I'm your voice assistant — just talk and I'll listen. What can I help you with?")
+            settings_module.save_settings({"first_launch_completed": True})
+        else:
+            await session.say(f"{agent_name} is online.")
+
+        logger.info("Agent ready - listening for speech...")
+
+        # Wait until session closes (room disconnects, etc.)
+        await close_event.wait()
+    finally:
+        async with _ROOM_GUARD_LOCK:
+            _ACTIVE_ROOMS.discard(room_name)
+            _DRAINING_ROOMS.add(room_name)
+        try:
+            await _teardown_session()
+        finally:
+            async with _ROOM_GUARD_LOCK:
+                _DRAINING_ROOMS.discard(room_name)
 
 
 # =============================================================================

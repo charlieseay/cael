@@ -66,6 +66,17 @@ _IOS_HOST_EQUIVALENT_TOOL_PREFIXES: dict[str, tuple[str, ...]] = {
     "compose_ios_message": ("send_message", "imessage", "sms", "message"),
     "make_ios_phone_call": ("phone_call", "call_contact", "dial"),
 }
+_OSASCRIPT_REQUIRED_TOOLS = {
+    "get_calendar_events",
+    "create_calendar_event",
+}
+
+
+def _tool_is_runtime_usable(tool_name: str) -> bool:
+    """Return False for tools that are present but not executable here."""
+    if tool_name in _OSASCRIPT_REQUIRED_TOOLS and shutil.which("osascript") is None:
+        return False
+    return True
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
 
@@ -708,6 +719,9 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
         ios_tools: list[dict] = []
         for tool in tools:
             name = tool.get("function", {}).get("name", "")
+            if name and not _tool_is_runtime_usable(name):
+                logger.info("Hiding unavailable tool %s (runtime requirement missing)", name)
+                continue
             if name in _IOS_BRIDGE_TOOL_NAMES:
                 # Hard policy: if a host equivalent exists, do not expose the iOS
                 # fallback tool to the model for this session.

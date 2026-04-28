@@ -37,6 +37,7 @@ from typing import Any
 from .anthropic_provider import AnthropicProvider
 from .base import LLMProvider, LLMResponse, ToolCall
 from .claude_cli_provider import ClaudeCLIProvider
+from .cursor_cli_provider import CursorCLIProvider
 from .gemini_cli_provider import GeminiCLIProvider
 from .google_provider import GoogleProvider
 from .groq_provider import GroqProvider
@@ -57,6 +58,7 @@ __all__ = [
     "OpenAICompatibleProvider",
     "OpenRouterProvider",
     "ClaudeCLIProvider",
+    "CursorCLIProvider",
     "AnthropicProvider",
     "GeminiCLIProvider",
     "GoogleProvider",
@@ -112,6 +114,8 @@ def create_provider(
         return OpenRouterProvider(**kwargs)
     elif provider_name == "claude_cli":
         return ClaudeCLIProvider(**kwargs)
+    elif provider_name == "cursor_cli":
+        return CursorCLIProvider(**kwargs)
     elif provider_name == "anthropic":
         return AnthropicProvider(**kwargs)
     elif provider_name == "gemini_cli":
@@ -122,7 +126,7 @@ def create_provider(
         raise ValueError(
             f"Unknown LLM provider: {provider_name}. "
             f"Supported providers: ollama, groq, openai_compatible, openrouter, "
-            f"claude_cli, anthropic, gemini_cli, google"
+            f"claude_cli, cursor_cli, anthropic, gemini_cli, google"
         )
 
 
@@ -197,6 +201,11 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
             model=settings.get("claude_cli_model", "claude-haiku-4-5"),
             temperature=settings.get("temperature", 0.15),
         )
+    elif provider_name == "cursor_cli":
+        return CursorCLIProvider(
+            model=settings.get("cursor_cli_model", ""),
+            temperature=settings.get("temperature", 0.15),
+        )
     elif provider_name == "anthropic":
         api_key = settings.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
         return AnthropicProvider(
@@ -219,5 +228,6 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
     else:
         raise ValueError(
             f"Unknown LLM provider: {provider_name}. "
-            f"Supported providers: ollama, groq, openai_compatible, openrouter"
+            f"Supported providers: ollama, groq, openai_compatible, openrouter, "
+            f"claude_cli, cursor_cli, anthropic, gemini_cli, google"
         )

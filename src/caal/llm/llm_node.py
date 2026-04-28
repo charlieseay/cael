@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..integrations.n8n import execute_n8n_workflow
 from ..memory import ShortTermMemory
+from ..routing.policy import is_capacity_error
 from ..utils.formatting import strip_markdown_for_tts
 from .providers import LLMProvider
 
@@ -181,6 +182,32 @@ async def llm_node(
             if _last_user:
                 provider, _routed_tier = await _router.route(_last_user, default_provider=provider)
 
+        async def _failover_provider(current_err: Exception) -> tuple[LLMProvider, int] | None:
+            """Escalate to next tier immediately on capacity failures."""
+            nonlocal provider, _routed_tier
+            if _router is None or _routed_tier is None:
+                return None
+            if _routed_tier >= 2:
+                return None
+            if not is_capacity_error(current_err):
+                return None
+
+            failed_tier = _routed_tier
+            _router.record(failed_tier, 0, success=False)
+            next_tier = failed_tier + 1
+            next_provider = _router._provider_for(next_tier)  # Internal cache/factory accessor
+            logger.warning(
+                "Provider capacity hit on tier %s (%s). Failing over to tier %s (%s/%s)",
+                failed_tier,
+                current_err,
+                next_tier,
+                next_provider.provider_name,
+                next_provider.model,
+            )
+            provider = next_provider
+            _routed_tier = next_tier
+            return next_provider, next_tier
+
         # Discover tools from agent and MCP servers
         t = time.perf_counter()
         tools = await _discover_tools(agent, provider)
@@ -202,47 +229,52 @@ async def llm_node(
                     response = await provider.chat(messages=messages, tools=tools)
                 except Exception as tool_err:
                     trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
-                    # Tool call generation failed (e.g., model garbled tool name)
-                    err_msg = str(tool_err)
-                    # Wrong tool name — model called a non-existent tool
-                    if "not found" in err_msg:
-                        logger.warning(
-                            f"LLM called non-existent tool: {err_msg}. "
-                            "Falling back to streaming."
-                        )
-                        break
-
-                    # Garbled tool call — leaked control tokens etc.
-                    is_garbled = (
-                        "tool_use_failed" in err_msg
-                        or "Failed to call a function" in err_msg
-                        or "[/THINK]" in err_msg
-                        or "[TOOL_CALLS]" in err_msg
-                        or "<function=" in err_msg
-                    )
-                    if is_garbled and tool_round == 0:
-                        logger.warning(
-                            f"Malformed tool call, retrying: {err_msg}"
-                        )
+                    failover = await _failover_provider(tool_err)
+                    if failover is not None:
                         t_llm = time.perf_counter()
-                        try:
-                            response = await provider.chat(
-                                messages=messages, tools=tools
-                            )
-                        except Exception:
-                            trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
+                        response = await provider.chat(messages=messages, tools=tools)
+                    else:
+                        # Tool call generation failed (e.g., model garbled tool name)
+                        err_msg = str(tool_err)
+                        # Wrong tool name — model called a non-existent tool
+                        if "not found" in err_msg:
                             logger.warning(
-                                "Retry failed, falling back to streaming"
+                                f"LLM called non-existent tool: {err_msg}. "
+                                "Falling back to streaming."
                             )
                             break
-                    elif is_garbled:
-                        logger.warning(
-                            f"Malformed tool call in round {tool_round + 1}, "
-                            "streaming final response"
+
+                        # Garbled tool call — leaked control tokens etc.
+                        is_garbled = (
+                            "tool_use_failed" in err_msg
+                            or "Failed to call a function" in err_msg
+                            or "[/THINK]" in err_msg
+                            or "[TOOL_CALLS]" in err_msg
+                            or "<function=" in err_msg
                         )
-                        break
-                    else:
-                        raise  # Re-raise non-tool errors
+                        if is_garbled and tool_round == 0:
+                            logger.warning(
+                                f"Malformed tool call, retrying: {err_msg}"
+                            )
+                            t_llm = time.perf_counter()
+                            try:
+                                response = await provider.chat(
+                                    messages=messages, tools=tools
+                                )
+                            except Exception:
+                                trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
+                                logger.warning(
+                                    "Retry failed, falling back to streaming"
+                                )
+                                break
+                        elif is_garbled:
+                            logger.warning(
+                                f"Malformed tool call in round {tool_round + 1}, "
+                                "streaming final response"
+                            )
+                            break
+                        else:
+                            raise  # Re-raise non-tool errors
 
                 trace.llm_rounds.append((time.perf_counter() - t_llm) * 1000)
 
@@ -314,6 +346,19 @@ async def llm_node(
                 ):
                     yield strip_markdown_for_tts(chunk)
             except Exception as stream_err:
+                failover = await _failover_provider(stream_err)
+                if failover is not None:
+                    async for chunk in provider.chat_stream(messages=messages, tools=tools):
+                        yield strip_markdown_for_tts(chunk)
+                    trace.stream_ms = (time.perf_counter() - t_stream) * 1000
+                    _emit_usage(agent, provider)
+                    trace.finish()
+                    logger.info(f"LATENCY TRACE: {trace.summary()}")
+                    _store_trace(agent, trace)
+                    if _router is not None and _routed_tier is not None and trace.llm_rounds:
+                        total_llm_ms = sum(trace.llm_rounds)
+                        _router.record(_routed_tier, total_llm_ms, success=True)
+                    return
                 # Safety fallback: strip tool messages and retry without tools
                 logger.warning(
                     f"Post-tool streaming failed: {stream_err}. "
@@ -324,8 +369,15 @@ async def llm_node(
                     yield strip_markdown_for_tts(chunk)
         else:
             # No tools or no tool calls — plain streaming
-            async for chunk in provider.chat_stream(messages=messages):
-                yield strip_markdown_for_tts(chunk)
+            try:
+                async for chunk in provider.chat_stream(messages=messages):
+                    yield strip_markdown_for_tts(chunk)
+            except Exception as stream_err:
+                failover = await _failover_provider(stream_err)
+                if failover is None:
+                    raise
+                async for chunk in provider.chat_stream(messages=messages):
+                    yield strip_markdown_for_tts(chunk)
         trace.stream_ms = (time.perf_counter() - t_stream) * 1000
 
         # Report token usage from final LLM call

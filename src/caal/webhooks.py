@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -49,6 +50,7 @@ from pydantic import BaseModel
 from . import network_state, registry_cache
 from . import settings as settings_module
 from .memory import ShortTermMemory
+from .routing.policy import policy_from_settings
 from .settings import validate_url
 
 logger = logging.getLogger(__name__)
@@ -431,6 +433,12 @@ class ModelsResponse(BaseModel):
     models: list[str]
 
 
+class RoutingPolicyResponse(BaseModel):
+    """Response body for /routing/policy endpoint."""
+
+    policy: dict[str, Any]
+
+
 @app.get("/settings", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
     """Get current settings and prompt content.
@@ -452,6 +460,13 @@ async def get_settings() -> SettingsResponse:
         prompt_content=prompt_content,
         custom_prompt_exists=custom_exists,
     )
+
+
+@app.get("/routing/policy", response_model=RoutingPolicyResponse)
+async def get_routing_policy() -> RoutingPolicyResponse:
+    """Get shared routing policy for Sonique + lab agent consumers."""
+    settings = settings_module.load_settings()
+    return RoutingPolicyResponse(policy=policy_from_settings(settings))
 
 
 async def _ensure_piper_model(model_id: str) -> None:
@@ -948,7 +963,7 @@ class SetupCompleteRequest(BaseModel):
     """Request body for /setup/complete endpoint."""
 
     llm_provider: str  # "ollama" | "groq" | "openai_compatible" | "openrouter"
-                       # | "claude_cli" | "anthropic" | "gemini_cli" | "google"
+                       # | "claude_cli" | "cursor_cli" | "anthropic" | "gemini_cli" | "google"
     # STT provider (independent from LLM)
     stt_provider: str | None = None  # "speaches" | "groq"
     # Ollama settings
@@ -966,6 +981,8 @@ class SetupCompleteRequest(BaseModel):
     openrouter_model: str | None = None
     # Claude CLI settings (subscription-native)
     claude_cli_model: str | None = None
+    # Cursor CLI settings (subscription-native)
+    cursor_cli_model: str | None = None
     # Anthropic API settings
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
@@ -1097,6 +1114,9 @@ async def complete_setup(req: SetupCompleteRequest) -> SetupCompleteResponse:
         # Claude CLI settings
         if req.claude_cli_model:
             current["claude_cli_model"] = req.claude_cli_model
+        # Cursor CLI settings
+        if req.cursor_cli_model is not None:
+            current["cursor_cli_model"] = req.cursor_cli_model
         # Anthropic API settings
         if req.anthropic_api_key:
             current["anthropic_api_key"] = req.anthropic_api_key
@@ -1475,6 +1495,11 @@ class TestGeminiCLIRequest(BaseModel):
     model: str = "gemini-2.0-flash"
 
 
+class TestCursorCLIRequest(BaseModel):
+    """Request body for /setup/test-cursor-cli endpoint."""
+    model: str = ""
+
+
 class TestAnthropicRequest(BaseModel):
     """Request body for /setup/test-anthropic endpoint."""
     api_key: str = ""
@@ -1533,6 +1558,33 @@ async def test_gemini_cli(req: TestGeminiCLIRequest) -> TestConnectionResponse:
         )
     except asyncio.TimeoutError:
         return TestConnectionResponse(success=False, error="gemini CLI timed out")
+    except Exception as e:
+        return TestConnectionResponse(success=False, error=str(e))
+
+
+@app.post("/setup/test-cursor-cli", response_model=TestConnectionResponse)
+async def test_cursor_cli(req: TestCursorCLIRequest) -> TestConnectionResponse:
+    """Test that the cursor CLI is installed and available."""
+    import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "cursor", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        if proc.returncode == 0:
+            version = stdout.decode().strip()
+            models = [req.model] if req.model else None
+            return TestConnectionResponse(success=True, models=models, error=version or None)
+        return TestConnectionResponse(success=False, error="cursor CLI returned non-zero exit code")
+    except FileNotFoundError:
+        return TestConnectionResponse(
+            success=False,
+            error="cursor CLI not found. Install and authenticate Cursor CLI."
+        )
+    except asyncio.TimeoutError:
+        return TestConnectionResponse(success=False, error="cursor CLI timed out")
     except Exception as e:
         return TestConnectionResponse(success=False, error=str(e))
 

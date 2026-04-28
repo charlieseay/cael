@@ -107,6 +107,20 @@ For remote access via [Tailscale](https://tailscale.com/), set `HTTPS_DOMAIN` in
 
 ---
 
+## Shared Routing Policy (Sonique + Lab Agents)
+
+CAAL publishes a shared routing policy contract so Sonique, Helmsman, and other
+local lab processes can use the same tiering + failover behavior.
+
+- Policy endpoint: `GET /routing/policy` (webhook server, default `:8889`)
+- Policy source: `src/caal/routing/policy.py`
+- Current default chain: local (`ollama`) -> middle (`openai_compatible`, e.g. NVIDIA) -> complex (`claude_cli` / `cursor_cli` / `gemini_cli`)
+- Capacity failover: rate/quota/capacity errors immediately escalate to next tier in the same turn
+
+This avoids routing drift across agents and keeps escalation logic centralized.
+
+---
+
 ## Architecture
 
 ```

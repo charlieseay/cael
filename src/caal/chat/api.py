@@ -185,6 +185,11 @@ def _get_runtime_settings() -> dict:
             user_settings.get("claude_cli_model")
             or os.getenv("CLAUDE_CLI_MODEL", "claude-haiku-4-5")
         ),
+        # Cursor CLI (subscription-native)
+        "cursor_cli_model": (
+            user_settings.get("cursor_cli_model")
+            or os.getenv("CURSOR_CLI_MODEL", "")
+        ),
         # Anthropic API
         "anthropic_api_key": (
             settings.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY", "")

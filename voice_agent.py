@@ -192,6 +192,26 @@ def get_runtime_settings() -> dict:
             user_settings.get("openrouter_model")
             or os.getenv("OPENROUTER_MODEL", "openai/gpt-4")
         ),
+        # CLI provider model settings
+        "claude_cli_model": (
+            user_settings.get("claude_cli_model")
+            or settings.get("claude_cli_model", "claude-haiku-4-5")
+        ),
+        "cursor_cli_model": (
+            user_settings.get("cursor_cli_model")
+            or settings.get("cursor_cli_model", "")
+        ),
+        "gemini_cli_model": (
+            user_settings.get("gemini_cli_model")
+            or settings.get("gemini_cli_model", "gemini-2.0-flash")
+        ),
+        # Model router tiers (local -> remote -> complex)
+        "router_simple_provider": settings.get("router_simple_provider", "ollama"),
+        "router_simple_model": settings.get("router_simple_model", "qwen3:4b"),
+        "router_medium_provider": settings.get("router_medium_provider", "ollama"),
+        "router_medium_model": settings.get("router_medium_model", "qwen3:8b"),
+        "router_complex_provider": settings.get("router_complex_provider", "claude_cli"),
+        "router_complex_model": settings.get("router_complex_model", "claude-haiku-4-5"),
         # Shared settings
         "max_turns": settings.get("max_turns", int(os.getenv("OLLAMA_MAX_TURNS", "20"))),
         "tool_cache_size": settings.get("tool_cache_size", int(os.getenv("TOOL_CACHE_SIZE", "3"))),

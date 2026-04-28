@@ -115,6 +115,8 @@ DEFAULT_SETTINGS = {
     "openrouter_model": "",       # Model name (empty = use default)
     # Claude CLI settings (subscription-native, no API key)
     "claude_cli_model": "claude-haiku-4-5",  # haiku | sonnet | opus
+    # Cursor CLI settings (headless `cursor -p`)
+    "cursor_cli_model": "",  # optional model flag for cursor CLI
     # Anthropic API settings (API key required)
     "anthropic_api_key": "",
     "anthropic_model": "claude-haiku-4-5",

@@ -59,6 +59,10 @@ For personal/device resources (calendar, contacts, local Mac actions), prefer DI
 
 **Information**
 - `web_search(query)` — DuckDuckGo for current events, prices, scores, weather
+- `route_task(task, context)` — Quarterdeck smart-router recommendation via `/route`
+- `route_metrics()` — weekly router metrics via `/route/metrics`
+- `router_memory(query)` — router KB memory check (bridges `/router memory`)
+- `explain_route_decision(task)` — explain why router chose a route for a task
 
 **MCP Hub (lazy)**
 - `list_tools(search)` — discover MCP tools by keyword
@@ -196,6 +200,10 @@ These are the most common request types. Always use the lazy discovery pattern a
 - "remind me to call the vet at 3pm" → `list_tools(search="reminder create")` → `call_tool(...)`
 - "play some jazz" → `list_tools(search="music play")` → `call_tool(...)`
 - "check github issues on the hone repo" → `list_tools(search="github issues")` → `call_tool(...)`
+- "which path should handle this SoniqueBar task?" → `route_task(task=...)`
+- "show me this week's router metrics" → `route_metrics()`
+- "check router memory" / "/router memory" → `router_memory(query=...)`
+- "why did router choose that path?" → `explain_route_decision(task=...)`
 
 Act immediately — don't ask for confirmation. Confirm AFTER the action completes.
 

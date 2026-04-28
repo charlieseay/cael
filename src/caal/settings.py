@@ -138,6 +138,8 @@ DEFAULT_SETTINGS = {
     "router_medium_model": "qwen3:8b",
     "router_complex_provider": "claude_cli",
     "router_complex_model": "claude-haiku-4-5",
+    # Quarterdeck smart router endpoint
+    "quarterdeck_router_url": "http://localhost:5681",
     # Assistant identity
     "assistant_avatar_filename": "",      # filename under AVATAR_DIR, empty = not set
     "client_connection_url": "",          # URL external clients (iOS/macOS) use to reach this server

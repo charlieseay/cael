@@ -57,6 +57,7 @@ from caal.integrations import (  # noqa: E402
     MCPHubTools,
     MemoryTools,
     NetworkTools,
+    RouterTools,
     WebSearchTools,
     create_hass_rest_tools,
     create_hass_tools,
@@ -256,7 +257,7 @@ def load_prompt(language: str = "en") -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MCPHubTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, iOSBridgeTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, iOSBridgeTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(

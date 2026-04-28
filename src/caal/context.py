@@ -22,12 +22,20 @@ from typing import TYPE_CHECKING
 _SERVER_IDLE_TTL = 300.0  # 5 minutes
 
 from .integrations import (
+    EXPLAIN_ROUTE_DECISION_TOOL_DEF,
     MEMORY_SHORT_TOOL_DEF,
+    ROUTER_MEMORY_TOOL_DEF,
+    ROUTE_METRICS_TOOL_DEF,
+    ROUTE_TASK_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
+    execute_explain_route_decision,
     execute_memory_short,
+    execute_route_metrics,
+    execute_route_task,
+    execute_router_memory,
     execute_web_search,
     initialize_mcp_servers,
 )
@@ -122,6 +130,10 @@ class ToolContext:
         self._agent_tool_definitions: list[dict] = [
             MEMORY_SHORT_TOOL_DEF,
             WEB_SEARCH_TOOL_DEF,
+            ROUTE_TASK_TOOL_DEF,
+            ROUTE_METRICS_TOOL_DEF,
+            ROUTER_MEMORY_TOOL_DEF,
+            EXPLAIN_ROUTE_DECISION_TOOL_DEF,
         ]
 
     async def ensure_mcp_initialized(self) -> None:
@@ -250,3 +262,19 @@ class ToolContext:
             query=query,
             provider=self._provider,
         )
+
+    async def route_task(self, task: str, context: str = "") -> str:
+        """Delegate to shared execute_route_task()."""
+        return await execute_route_task(task=task, context=context)
+
+    async def route_metrics(self) -> str:
+        """Delegate to shared execute_route_metrics()."""
+        return await execute_route_metrics()
+
+    async def router_memory(self, query: str = "") -> str:
+        """Delegate to shared execute_router_memory()."""
+        return await execute_router_memory(query=query)
+
+    async def explain_route_decision(self, task: str) -> str:
+        """Delegate to shared execute_explain_route_decision()."""
+        return await execute_explain_route_decision(task=task)

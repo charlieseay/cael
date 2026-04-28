@@ -35,6 +35,8 @@ ollama pull coreworxlab/caal-qwen3.5-9b
 - **n8n Workflows** — Any workflow becomes a tool. Visual, inspectable, shareable, auditable through n8n's execution history
 - **Flexible Providers** — Ollama, Groq, OpenRouter, or any OpenAI-compatible API. Speaches or Groq for STT. Auto/Kokoro/Piper for TTS (auto prefers Kokoro for English when healthy, falls back to Piper)
 - **Voice Stability Guardrails** — Low-CPU VAD defaults (`sample_rate=8000`, higher activation threshold, longer silence window) reduce realtime lag spikes that can destabilize long voice sessions
+
+For Apple profile users running Kokoro as an external service, set `KOKORO_URL` to a reachable endpoint. In our lab Docker profile this is `http://host.docker.internal:8880`.
 - **Short-Term Memory** — Store and recall information across sessions
 - **Internationalization** — English, French, Italian, with more coming
 - **Wake Word** — "Hey Cal" via OpenWakeWord

@@ -150,7 +150,7 @@ services:
       - PIPER_URL=http://speaches:8000
       - WHISPER_MODEL=Systran/faster-whisper-small
       # TTS Kokoro via mlx-audio on host (optional, for English)
-      - KOKORO_URL=${MLX_AUDIO_URL:-http://host.docker.internal:8001}
+      - KOKORO_URL=${MLX_AUDIO_URL:-http://host.docker.internal:8880}
       - TTS_MODEL=${TTS_MODEL:-prince-canuma/Kokoro-82M}
       - TTS_VOICE=${TTS_VOICE:-af_heart}
       # LightRAG knowledge base (organic memory layer)

@@ -95,7 +95,10 @@ class SyncChunkedStream(tts.ChunkedStream):
         Puts chunk bytes as they arrive, then None as a sentinel when done.
         Puts an Exception instance on error (before the sentinel).
         """
-        url = f"{opts.base_url}/audio/speech"
+        # OpenAI-compatible TTS endpoint (preferred). Some stacks also expose
+        # /audio/speech, but /v1/audio/speech is the canonical path used by
+        # both slim services and Speaches compatibility mode.
+        url = f"{opts.base_url}/v1/audio/speech"
         headers = {
             "Authorization": f"Bearer {opts.api_key}",
             "Content-Type": "application/json",
@@ -116,8 +119,20 @@ class SyncChunkedStream(tts.ChunkedStream):
                 headers=headers,
                 json=payload,
                 timeout=timeout,
-                stream=True,
+                stream=False,
             )
+
+            # Backward-compatible fallback for older servers that only expose
+            # /audio/speech instead of /v1/audio/speech.
+            if response.status_code == 404:
+                legacy_url = f"{opts.base_url}/audio/speech"
+                response = requests.post(
+                    legacy_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                    stream=False,
+                )
 
             if response.status_code != 200:
                 exc = APIStatusError(
@@ -129,12 +144,23 @@ class SyncChunkedStream(tts.ChunkedStream):
                 loop.call_soon_threadsafe(out_q.put_nowait, exc)
                 return
 
-            total = 0
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    total += len(chunk)
-                    loop.call_soon_threadsafe(out_q.put_nowait, chunk)
-            logger.debug(f"Streamed {total} bytes of audio")
+            audio_bytes = response.content or b""
+            if not audio_bytes:
+                loop.call_soon_threadsafe(
+                    out_q.put_nowait, APIConnectionError("TTS returned empty audio body")
+                )
+                return
+            # LiveKit's wav decoder expects the RIFF header at the beginning of
+            # the pushed payload. Push the full body as one chunk to avoid
+            # header-splitting issues across chunk boundaries.
+            if opts.response_format == "wav" and not audio_bytes.startswith(b"RIFF"):
+                loop.call_soon_threadsafe(
+                    out_q.put_nowait,
+                    APIConnectionError("TTS returned non-WAV payload for wav request"),
+                )
+                return
+            loop.call_soon_threadsafe(out_q.put_nowait, audio_bytes)
+            logger.debug(f"Fetched {len(audio_bytes)} bytes of audio")
 
         except requests.exceptions.Timeout:
             loop.call_soon_threadsafe(

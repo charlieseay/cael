@@ -952,16 +952,12 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             action = cmd.get("action")
             logger.info(f"Received webhook command: {action}")
 
-            if action == "announce":
-                message = cmd.get("message", "")
-                if message:
-                    await session.say(message)
-
-            elif action == "wake":
-                lang = settings_module.get_setting("language", "en")
-                greetings = get_wake_greetings(lang)
-                greeting = random.choice(greetings)
-                await session.say(greeting)
+            if action in {"announce", "wake"}:
+                # Stability mode: suppress command-triggered speech so only
+                # normal turn responses speak. This avoids greeting/announce
+                # audio colliding with active conversation playback.
+                logger.info(f"Ignoring webhook command in stability mode: {action}")
+                return
 
             elif action == "reload_tools":
                 # Clear agent's internal caches
@@ -1040,14 +1036,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # Brief pause so the audio channel is fully open before speaking — prevents first word cutoff
         await asyncio.sleep(0.8)
 
-        # First-ever session gets the full intro; subsequent sessions get a short ready signal
-        agent_name = settings_module.get_setting("agent_name", "Cal")
-        first_launch = not settings_module.get_setting("first_launch_completed", False)
-        if first_launch:
-            await session.say(f"Hey, I'm {agent_name}. I'm your voice assistant — just talk and I'll listen. What can I help you with?")
-            settings_module.save_settings({"first_launch_completed": True})
-        else:
-            await session.say(f"{agent_name} is online.")
+        # Stability mode: skip automatic startup speech. This prevents the
+        # intro/online line from masking or replacing the first real reply.
 
         logger.info("Agent ready - listening for speech...")
 

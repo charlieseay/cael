@@ -2107,9 +2107,7 @@ async def prewarm() -> PrewarmResponse:
             # Import here to avoid circular imports
             from voice_agent import preload_models
 
-            ollama_host = settings.get("ollama_host", "http://localhost:11434")
-            ollama_model = settings.get("ollama_model", "ministral-3:8b")
-            await preload_models(ollama_host, ollama_model)
+            await asyncio.to_thread(preload_models)
             logger.info("Model prewarm completed")
         except Exception as e:
             logger.error(f"Prewarm failed: {e}")

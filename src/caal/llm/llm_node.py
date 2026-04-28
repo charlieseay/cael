@@ -55,6 +55,17 @@ _IOS_BRIDGE_TOOL_NAMES = {
     "make_ios_phone_call",
 }
 
+# If a host-equivalent tool exists, hide the iOS fallback tool from discovery.
+# This enforces host-first routing at tool-surface level (not prompt-only).
+_IOS_HOST_EQUIVALENT_TOOL_PREFIXES: dict[str, tuple[str, ...]] = {
+    "query_ios_calendar": ("get_calendar_events", "calendar"),
+    "query_ios_contacts": ("contacts", "address_book", "people_lookup"),
+    "query_ios_directions": ("directions", "maps_route", "get_directions"),
+    "query_ios_location": ("location", "where_am_i", "current_location"),
+    "compose_ios_message": ("send_message", "imessage", "sms", "message"),
+    "make_ios_phone_call": ("phone_call", "call_contact", "dial"),
+}
+
 
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
@@ -447,6 +458,17 @@ def _strip_tool_messages(messages: list[dict]) -> list[dict]:
     return cleaned
 
 
+def _host_equivalent_exists(ios_tool_name: str, host_tool_names: set[str]) -> bool:
+    prefixes = _IOS_HOST_EQUIVALENT_TOOL_PREFIXES.get(ios_tool_name, ())
+    if not prefixes:
+        return False
+    for host in host_tool_names:
+        h = host.lower()
+        if any(p in h for p in prefixes):
+            return True
+    return False
+
+
 def _build_messages_from_context(
     chat_ctx,
     tool_data_cache: ToolDataCache | None = None,
@@ -655,11 +677,27 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
 
     # Routing policy: host-connected services first, iOS bridge tools last.
     if tools:
+        tool_names = {
+            t.get("function", {}).get("name", "")
+            for t in tools
+            if isinstance(t, dict)
+        }
+        host_tool_names = {
+            n for n in tool_names if n and n not in _IOS_BRIDGE_TOOL_NAMES
+        }
         host_tools: list[dict] = []
         ios_tools: list[dict] = []
         for tool in tools:
             name = tool.get("function", {}).get("name", "")
             if name in _IOS_BRIDGE_TOOL_NAMES:
+                # Hard policy: if a host equivalent exists, do not expose the iOS
+                # fallback tool to the model for this session.
+                if _host_equivalent_exists(name, host_tool_names):
+                    logger.info(
+                        "Hiding iOS fallback tool %s (host equivalent present)",
+                        name,
+                    )
+                    continue
                 desc = tool.get("function", {}).get("description", "") or ""
                 if "iOS-only fallback" not in desc:
                     tool["function"]["description"] = (

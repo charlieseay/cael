@@ -116,6 +116,7 @@ local lab processes can use the same tiering + failover behavior.
 - Policy source: `src/caal/routing/policy.py`
 - Current default chain: local (`ollama`) -> middle (`openai_compatible`, e.g. NVIDIA) -> complex (`claude_cli` / `cursor_cli` / `gemini_cli`)
 - Capacity failover: rate/quota/capacity errors immediately escalate to next tier in the same turn
+- Tool-surface enforcement: iOS bridge tools are hidden at discovery time when host-equivalent tools exist, so host-first applies globally and iOS remains fallback-only
 
 This avoids routing drift across agents and keeps escalation logic centralized.
 

@@ -826,14 +826,17 @@ class HelmsmanTools:
                     timeout=timeout,
                 )
                 return result.returncode, result.stdout, result.stderr
-            except subprocess.TimeoutExpired:
-                return -1, "", "Command timed out locally."
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                # Fall through to mac_actions bridge if osascript fails locally
+                logger.info("osascript failed or not available locally; routing via mac_actions bridge")
             except Exception as e:
-                return -1, "", str(e)
+                logger.warning(f"osascript error: {e}")
+                # Fall through to mac_actions bridge
+        else:
+            logger.info("osascript not found in PATH; routing via mac_actions bridge")
 
         # Fallback to mac_actions bridge (via SoniqueBar)
         try:
-            logger.info("osascript not found locally; routing via mac_actions bridge")
             action_id = mac_actions.enqueue("run_applescript", {"script": script})
             # SoniqueBar polls every ~1-2s. Wait up to timeout + buffer.
             action = await mac_actions.wait_for_completion(action_id, timeout=timeout + 10.0)

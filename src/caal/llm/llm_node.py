@@ -474,15 +474,18 @@ def _strip_tool_messages(messages: list[dict]) -> list[dict]:
 
 
 def _host_equivalent_exists(ios_tool_name: str, host_tool_names: set[str]) -> bool:
-    # Global host resources should prefer SoniqueBar/macOS bridge when available.
-    if ios_tool_name in _IOS_GLOBAL_RESOURCE_TOOLS and _mac_bridge_available(host_tool_names):
-        return True
-
     # Docker/Linux agent containers cannot execute macOS automation tools.
     # If osascript is unavailable, keep iOS bridge calendar fallback visible.
     if ios_tool_name == "query_ios_calendar" and "get_calendar_events" in host_tool_names:
         if shutil.which("osascript") is None:
             return False
+    # For non-calendar global resources, SoniqueBar/macOS bridge should win when available.
+    if (
+        ios_tool_name in _IOS_GLOBAL_RESOURCE_TOOLS
+        and ios_tool_name != "query_ios_calendar"
+        and _mac_bridge_available(host_tool_names)
+    ):
+        return True
     prefixes = _IOS_HOST_EQUIVALENT_TOOL_PREFIXES.get(ios_tool_name, ())
     if not prefixes:
         return False

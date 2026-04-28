@@ -211,6 +211,13 @@ def _get_runtime_settings() -> dict:
             user_settings.get("google_model")
             or os.getenv("GOOGLE_MODEL", "gemini-2.0-flash")
         ),
+        # Router tier config (kept in sync with voice path)
+        "router_simple_provider": settings.get("router_simple_provider", "ollama"),
+        "router_simple_model": settings.get("router_simple_model", "qwen3:4b"),
+        "router_medium_provider": settings.get("router_medium_provider", "ollama"),
+        "router_medium_model": settings.get("router_medium_model", "qwen3:8b"),
+        "router_complex_provider": settings.get("router_complex_provider", "claude_cli"),
+        "router_complex_model": settings.get("router_complex_model", "claude-haiku-4-5"),
         # Shared
         "max_turns": settings.get(
             "max_turns", int(os.getenv("OLLAMA_MAX_TURNS", "20"))

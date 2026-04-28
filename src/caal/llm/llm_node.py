@@ -66,22 +66,6 @@ _IOS_HOST_EQUIVALENT_TOOL_PREFIXES: dict[str, tuple[str, ...]] = {
     "compose_ios_message": ("send_message", "imessage", "sms", "message"),
     "make_ios_phone_call": ("phone_call", "call_contact", "dial"),
 }
-
-_IOS_GLOBAL_RESOURCE_TOOLS = {
-    "query_ios_calendar",
-    "query_ios_contacts",
-    "query_ios_directions",
-    "query_ios_location",
-    "compose_ios_message",
-    "make_ios_phone_call",
-}
-
-
-def _mac_bridge_available(host_tool_names: set[str]) -> bool:
-    # SoniqueBar-backed host actions exposed via MacControlTools.
-    return any(name.startswith("mac_") for name in host_tool_names)
-
-
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
 
@@ -479,13 +463,6 @@ def _host_equivalent_exists(ios_tool_name: str, host_tool_names: set[str]) -> bo
     if ios_tool_name == "query_ios_calendar" and "get_calendar_events" in host_tool_names:
         if shutil.which("osascript") is None:
             return False
-    # For non-calendar global resources, SoniqueBar/macOS bridge should win when available.
-    if (
-        ios_tool_name in _IOS_GLOBAL_RESOURCE_TOOLS
-        and ios_tool_name != "query_ios_calendar"
-        and _mac_bridge_available(host_tool_names)
-    ):
-        return True
     prefixes = _IOS_HOST_EQUIVALENT_TOOL_PREFIXES.get(ios_tool_name, ())
     if not prefixes:
         return False

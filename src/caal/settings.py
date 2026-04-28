@@ -98,8 +98,8 @@ DEFAULT_SETTINGS = {
     "max_turns": 20,
     "tool_cache_size": 3,
     # Wake word detection (server-side OpenWakeWord)
-    "wake_word_enabled": True,
-    "wake_word_model": "models/hey_jarvis.onnx",
+    "wake_word_enabled": False,
+    "wake_word_model": "models/hey_cal.onnx",
     "wake_word_threshold": 0.5,
     "wake_word_timeout": 3.0,  # seconds of silence before returning to listening
     "standby_timeout": 30.0,  # seconds in listening before entering standby (power save)
@@ -155,7 +155,16 @@ PIPER_VOICE_MAP: dict[str, str] = {
 }
 
 # Keys that should never be returned via API (security)
-SENSITIVE_KEYS: set[str] = set()  # All keys returned - shown as dots in password fields
+SENSITIVE_KEYS: set[str] = {
+    "groq_api_key",
+    "openai_api_key",
+    "openrouter_api_key",
+    "anthropic_api_key",
+    "google_api_key",
+    "hass_token",
+    "n8n_token",
+    "n8n_api_key",
+}
 
 # Cached settings (reloaded on save)
 _settings_cache: dict | None = None

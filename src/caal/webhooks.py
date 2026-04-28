@@ -513,8 +513,16 @@ async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
 
     # Secret fields that should not be overwritten with empty values
     # (UI doesn't show these, so saving would clear them)
-    secret_fields = {"groq_api_key", "hass_token", "n8n_token", "n8n_api_key",
-                     "openai_api_key", "openrouter_api_key"}
+    secret_fields = {
+        "groq_api_key",
+        "hass_token",
+        "n8n_token",
+        "n8n_api_key",
+        "openai_api_key",
+        "openrouter_api_key",
+        "anthropic_api_key",
+        "google_api_key",
+    }
 
     # Validate URL fields
     url_fields = ["openai_base_url", "ollama_host", "hass_host", "n8n_url"]

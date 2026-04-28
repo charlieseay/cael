@@ -965,7 +965,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
             elif action == "reload_tools":
                 # Clear agent's internal caches
-                assistant._ollama_tools_cache = None
+                assistant._llm_tools_cache = None
 
                 # Clear n8n module-level cache so fresh notes are fetched
                 from caal.integrations.n8n import clear_caches as clear_n8n_caches

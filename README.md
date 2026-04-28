@@ -33,7 +33,7 @@ ollama pull coreworxlab/caal-qwen3.5-9b
 - **Tool Chaining** — Sequential multi-tool calls in one prompt. The model uses real data from each step to inform the next
 - **Home Assistant** — Voice control across lights, covers, locks, climate, media, and more via `hass`
 - **n8n Workflows** — Any workflow becomes a tool. Visual, inspectable, shareable, auditable through n8n's execution history
-- **Flexible Providers** — Ollama, Groq, OpenRouter, or any OpenAI-compatible API. Speaches or Groq for STT. Kokoro or Piper for TTS
+- **Flexible Providers** — Ollama, Groq, OpenRouter, or any OpenAI-compatible API. Speaches or Groq for STT. Auto/Kokoro/Piper for TTS (auto prefers Kokoro for English when healthy, falls back to Piper)
 - **Short-Term Memory** — Store and recall information across sessions
 - **Internationalization** — English, French, Italian, with more coming
 - **Wake Word** — "Hey Cal" via OpenWakeWord

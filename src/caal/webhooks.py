@@ -682,7 +682,7 @@ async def get_voices(provider: str | None = None) -> VoicesResponse:
     """Get available TTS voices based on TTS provider.
 
     Args:
-        provider: Optional provider override ("kokoro" or "piper").
+        provider: Optional provider override ("auto", "kokoro", or "piper").
                   If not specified, uses current setting.
 
     Returns:
@@ -690,7 +690,7 @@ async def get_voices(provider: str | None = None) -> VoicesResponse:
     """
     if provider is None:
         settings = settings_module.load_settings()
-        provider = settings.get("tts_provider", "kokoro")
+        provider = settings.get("tts_provider", "auto")
 
     if provider == "piper":
         # Piper voices are model IDs - return curated list
@@ -992,7 +992,7 @@ class SetupCompleteRequest(BaseModel):
     google_api_key: str | None = None
     google_model: str | None = None
     # TTS provider
-    tts_provider: str = "kokoro"  # "kokoro" | "piper"
+    tts_provider: str = "auto"  # "auto" | "kokoro" | "piper"
     tts_voice_kokoro: str | None = None
     tts_voice_piper: str | None = None
     # Language setting (optional, defaults to "en")

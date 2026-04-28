@@ -30,6 +30,7 @@ import os
 import random
 import sys
 import time
+from urllib.parse import urljoin
 
 import requests
 
@@ -126,6 +127,16 @@ LIGHTRAG_URL = os.getenv("LIGHTRAG_URL", "http://host.docker.internal:8128")
 from caal import settings as settings_module  # noqa: E402
 
 
+def _is_kokoro_healthy(timeout_s: float = 1.5) -> bool:
+    """Fast health probe for Kokoro runtime routing decisions."""
+    try:
+        health_url = urljoin(KOKORO_URL.rstrip("/") + "/", "health")
+        r = requests.get(health_url, timeout=timeout_s)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def get_wake_greetings(language: str) -> list[str]:
     """Get wake greetings from file for the given language."""
     return settings_module.load_greetings(language)
@@ -146,7 +157,7 @@ def get_runtime_settings() -> dict:
         # Language
         "language": settings.get("language", "en"),
         # TTS settings
-        "tts_provider": user_settings.get("tts_provider") or os.getenv("TTS_PROVIDER", "kokoro"),
+        "tts_provider": user_settings.get("tts_provider") or os.getenv("TTS_PROVIDER", "auto"),
         "tts_voice_kokoro": settings.get("tts_voice_kokoro") or os.getenv("TTS_VOICE", "am_puck"),
         "tts_voice_piper": settings.get("tts_voice_piper") or "speaches-ai/piper-en_US-ryan-high",
         # STT Provider settings
@@ -417,10 +428,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         logger.info(f"  STT: Groq (whisper-large-v3-turbo, lang={language})")
     else:
         logger.info(f"  STT: {SPEACHES_URL} ({WHISPER_MODEL}, lang={language})")
-    if runtime["tts_provider"] == "piper":
-        logger.info(f"  TTS: Piper ({runtime['tts_voice_piper']})")
-    else:
-        logger.info(f"  TTS: Kokoro ({runtime['tts_voice_kokoro']})")
+    logger.info(f"  TTS preference: {runtime['tts_provider']}")
     llm_provider = runtime["llm_provider"]
     if llm_provider == "ollama":
         logger.info(
@@ -547,8 +555,25 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         stt_instance = base_stt
         logger.info("  Wake word: disabled")
 
-    # Create TTS instance based on provider
-    tts_provider = runtime["tts_provider"]
+    # Create TTS instance based on provider (auto routes to healthiest local option)
+    requested_tts_provider = runtime["tts_provider"]
+    tts_provider = requested_tts_provider
+
+    if tts_provider == "auto":
+        if language == "en" and _is_kokoro_healthy():
+            tts_provider = "kokoro"
+        else:
+            tts_provider = "piper"
+
+    # For English sessions, prefer Kokoro when healthy unless explicitly forced to Piper.
+    if (
+        tts_provider == "piper"
+        and language == "en"
+        and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
+        and _is_kokoro_healthy()
+    ):
+        logger.info("Kokoro healthy on English session; overriding Piper to Kokoro")
+        tts_provider = "kokoro"
 
     # Auto-switch from Kokoro to Piper for non-English languages when Piper is available
     if tts_provider == "kokoro" and language != "en":
@@ -563,6 +588,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             logger.info(
                 f"Kokoro TTS with {language} (no Piper service available)"
             )
+
+    if tts_provider == "piper":
+        logger.info(f"  TTS active: Piper ({runtime['tts_voice_piper']})")
+    else:
+        logger.info(f"  TTS active: Kokoro ({runtime['tts_voice_kokoro']})")
 
     if tts_provider == "piper":
         piper_voice = runtime["tts_voice_piper"]

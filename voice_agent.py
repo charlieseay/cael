@@ -1161,10 +1161,19 @@ if __name__ == "__main__":
     # Preload models before starting worker
     preload_models()
 
+    num_idle_env = os.getenv("CAAL_NUM_IDLE_PROCESSES", "").strip()
+    worker_kwargs: dict[str, object] = {
+        "entrypoint_fnc": entrypoint,
+        # Suppress memory warnings (models use ~1GB, this is expected)
+        "job_memory_warn_mb": 0,
+    }
+    if num_idle_env:
+        try:
+            worker_kwargs["num_idle_processes"] = max(1, int(num_idle_env))
+            logger.info("Worker num_idle_processes=%s", worker_kwargs["num_idle_processes"])
+        except ValueError:
+            logger.warning("Invalid CAAL_NUM_IDLE_PROCESSES=%r, ignoring", num_idle_env)
+
     agents.cli.run_app(
-        agents.WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            # Suppress memory warnings (models use ~1GB, this is expected)
-            job_memory_warn_mb=0,
-        )
+        agents.WorkerOptions(**worker_kwargs)
     )

@@ -162,6 +162,8 @@ services:
       - DISPATCH_URL=http://host.docker.internal:5680/webhook/task-dispatch
       - DISPATCH_SECRET=${DISPATCH_SECRET:-}
       - HELMSMAN_DB_URL=http://host.docker.internal:5682
+      # Apple profile: reduce idle worker process fanout to avoid STT contention
+      - CAAL_NUM_IDLE_PROCESSES=1
     volumes:
       - caal-memory:/app/data
       - caal-config:/app/config  # Runtime config (settings.json, mcp_servers.json)

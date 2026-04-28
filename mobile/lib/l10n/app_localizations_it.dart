@@ -249,6 +249,15 @@ class AppLocalizationsIt extends AppLocalizations {
   String get languageItalian => 'Italiano';
 
   @override
+  String get languagePortuguese => 'Português';
+
+  @override
+  String get languageDanish => 'Dansk';
+
+  @override
+  String get languageRomanian => 'Română';
+
+  @override
   String get changesNote =>
       'Nota: Le modifiche al modello, dimensione del contesto e parola di attivazione avranno effetto alla prossima sessione.';
 
@@ -322,5 +331,5 @@ class AppLocalizationsIt extends AppLocalizations {
   String get standbyMode => 'Standby';
 
   @override
-  String get sayCaelToWake => 'Di "Hey Cael" per riattivare';
+  String get sayCaelToWake => 'Di \"Hey Cael\" per riattivare';
 }

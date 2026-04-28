@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' as sdk;
@@ -98,7 +97,7 @@ class ToolStatusCtrl extends ChangeNotifier {
   /// Queries EKEventStore on-device, then publishes the result back on the
   /// `ios_calendar_result` topic so the backend's [query_ios_calendar] tool
   /// can resolve and return event data to the LLM.
-  Future<void> _handleCalendarRequest(Uint8List data) async {
+  Future<void> _handleCalendarRequest(List<int> data) async {
     if (!SiriIntentBridge.isAvailable) return;
 
     try {
@@ -119,10 +118,8 @@ class ToolStatusCtrl extends ChangeNotifier {
 
       await room.localParticipant?.publishData(
         payload,
-        options: const sdk.DataPublishOptions(
-          reliable: true,
-          topic: 'ios_calendar_result',
-        ),
+        reliable: true,
+        topic: 'ios_calendar_result',
       );
 
       _setExecutionMessage(result.message);
@@ -132,7 +129,7 @@ class ToolStatusCtrl extends ChangeNotifier {
   }
 
   /// Respond to a `request_ios_contacts` packet from the backend.
-  Future<void> _handleContactsRequest(Uint8List data) async {
+  Future<void> _handleContactsRequest(List<int> data) async {
     if (!SiriIntentBridge.isAvailable) return;
 
     try {
@@ -148,10 +145,8 @@ class ToolStatusCtrl extends ChangeNotifier {
 
       await room.localParticipant?.publishData(
         payload,
-        options: const sdk.DataPublishOptions(
-          reliable: true,
-          topic: 'ios_contacts_result',
-        ),
+        reliable: true,
+        topic: 'ios_contacts_result',
       );
 
       _setExecutionMessage(result.message);
@@ -161,7 +156,7 @@ class ToolStatusCtrl extends ChangeNotifier {
   }
 
   /// Respond to a `request_ios_directions` packet from the backend.
-  Future<void> _handleDirectionsRequest(Uint8List data) async {
+  Future<void> _handleDirectionsRequest(List<int> data) async {
     if (!SiriIntentBridge.isAvailable) return;
 
     try {
@@ -182,10 +177,8 @@ class ToolStatusCtrl extends ChangeNotifier {
 
       await room.localParticipant?.publishData(
         payload,
-        options: const sdk.DataPublishOptions(
-          reliable: true,
-          topic: 'ios_directions_result',
-        ),
+        reliable: true,
+        topic: 'ios_directions_result',
       );
 
       _setExecutionMessage(result.message);
@@ -195,7 +188,7 @@ class ToolStatusCtrl extends ChangeNotifier {
   }
 
   /// Respond to a `request_ios_location` packet from the backend.
-  Future<void> _handleLocationRequest(Uint8List data) async {
+  Future<void> _handleLocationRequest(List<int> data) async {
     if (!SiriIntentBridge.isAvailable) return;
 
     try {
@@ -208,10 +201,8 @@ class ToolStatusCtrl extends ChangeNotifier {
 
       await room.localParticipant?.publishData(
         payload,
-        options: const sdk.DataPublishOptions(
-          reliable: true,
-          topic: 'ios_location_result',
-        ),
+        reliable: true,
+        topic: 'ios_location_result',
       );
 
       _setExecutionMessage(result.message);

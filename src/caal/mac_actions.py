@@ -15,6 +15,7 @@ Supported action types:
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -22,6 +23,7 @@ from typing import Any
 
 # Single in-memory queue — single-user, single-Mac design.
 _queue: list[dict[str, Any]] = []
+_events: dict[str, asyncio.Event] = {}
 
 
 def enqueue(action_type: str, params: dict[str, Any], source: str = "voice") -> str:
@@ -37,6 +39,7 @@ def enqueue(action_type: str, params: dict[str, Any], source: str = "voice") -> 
             "queued_at": time.time(),
         }
     )
+    _events[action_id] = asyncio.Event()
     _evict_old()
     return action_id
 
@@ -58,8 +61,34 @@ def complete(
             action["result"] = result
             action["error"] = error
             action["completed_at"] = time.time()
+            if action_id in _events:
+                _events[action_id].set()
             return True
     return False
+
+
+async def wait_for_completion(action_id: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Wait for an action to be completed by SoniqueBar.
+
+    Returns the action dict (including result/error) or raises TimeoutError.
+    """
+    if action_id not in _events:
+        # Check if it's already done
+        for a in _queue:
+            if a["id"] == action_id and a["status"] in ("done", "error"):
+                return a
+        raise ValueError(f"No event tracker for action {action_id}")
+
+    event = _events[action_id]
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    finally:
+        _events.pop(action_id, None)
+
+    for a in _queue:
+        if a["id"] == action_id:
+            return a
+    raise ValueError(f"Action {action_id} disappeared from queue")
 
 
 def _evict_old() -> None:

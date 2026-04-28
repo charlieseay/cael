@@ -3,7 +3,20 @@ import 'package:livekit_components/livekit_components.dart' as lk_components;
 
 // Ext for Participant
 extension ParticipantAgentExt on sdk.Participant {
-  bool get isAgent => kind == sdk.ParticipantKind.AGENT;
+  bool get isAgent {
+    // Some sessions report AGENT via identity/attributes before kind settles.
+    final identityLower = identity.toLowerCase();
+    final role = (attributes['role'] ?? attributes['participant_role'] ?? '')
+        .toString()
+        .toLowerCase();
+    final lkKind = (attributes['lk.kind'] ?? attributes['kind'] ?? '')
+        .toString()
+        .toLowerCase();
+    return kind == sdk.ParticipantKind.AGENT ||
+        identityLower.startsWith('agent-') ||
+        role == 'agent' ||
+        lkKind == 'agent';
+  }
 
   sdk.AgentAttributes get agentAttributes => sdk.AgentAttributes.fromJson(attributes);
   sdk.AgentState? get agentState => agentAttributes.lkAgentState;

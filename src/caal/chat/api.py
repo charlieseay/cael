@@ -33,6 +33,7 @@ from ..integrations import load_mcp_config
 from ..integrations.n8n import clear_caches as clear_n8n_caches
 from ..llm import llm_node
 from ..memory import ShortTermMemory
+from ..utils.formatting import strip_markdown_for_tts
 from .session import PERSISTENT_SESSION_ID, ChatSession, ChatSessionManager
 
 logger = logging.getLogger(__name__)
@@ -461,7 +462,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
             _tool_context._on_tool_status = None
             _tool_context._on_usage = None
 
-    response_text = "".join(response_chunks)
+    response_text = strip_markdown_for_tts("".join(response_chunks)).strip()
     tool_calls = list(tool_calls_log)
 
     # Add assistant response to session history

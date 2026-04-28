@@ -27,6 +27,7 @@ import MediaPlayer
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
+        configureAudioSession()
         locationManager.delegate = self
         if let controller = window?.rootViewController as? FlutterViewController {
             let channel = FlutterMethodChannel(
@@ -38,6 +39,21 @@ import MediaPlayer
             }
         }
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+
+    private func configureAudioSession() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+            )
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            try audioSession.overrideOutputAudioPort(.speaker)
+        } catch {
+            NSLog("CAAL audio session setup failed: \(error.localizedDescription)")
+        }
     }
 
     private func handleCapability(_ name: String, arguments: [String: Any], result: @escaping FlutterResult) {
@@ -99,7 +115,7 @@ import MediaPlayer
                     taskTitles: [INSpeakableString(spokenPhrase: title)],
                     spatialEventTrigger: nil,
                     temporalEventTrigger: nil,
-                    priority: nil
+                    priority: .notFlagged
                 )
                 let interaction = INInteraction(intent: intent, response: nil)
                 interaction.donate(completion: nil)
@@ -144,16 +160,8 @@ import MediaPlayer
                 return
             }
 
-            let intent = INGetDirectionsIntent(
-                source: nil,
-                destination: INPlacemark(
-                    placemark: mapItem.placemark,
-                    name: mapItem.name
-                ),
-                routeType: .driving
-            )
-            let interaction = INInteraction(intent: intent, response: nil)
-            interaction.donate(completion: nil)
+            // Keep donation optional to avoid SDK compatibility drift.
+            // The action still succeeds without donating an intent here.
 
             // Maps is not opened here — the user stays in the conversation.
             // The agent reports the resolved destination; the user can start
@@ -360,32 +368,27 @@ import MediaPlayer
     }
 
     private func queryContactsWithName(_ name: String, store: CNContactStore, result: @escaping FlutterResult) {
-        let predicate = CNContact.predicateForContacts(matching: CNContactFormatter.descriptorForRequiredKeys(for: .fullName))
+        let keysToFetch: [CNKeyDescriptor] = [
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactPhoneNumbersKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor
+        ]
+        let predicate = CNContact.predicateForContacts(matchingName: name)
         do {
-            let contacts = try store.unifiedContacts(matching: predicate)
-            let keysToFetch = [
-                CNContactGivenNameKey,
-                CNContactFamilyNameKey,
-                CNContactPhoneNumbersKey,
-                CNContactEmailAddressesKey
-            ] as [CNKeyDescriptor]
+            let contacts = try store.unifiedContacts(matching: predicate, keysToFetch: keysToFetch)
 
-            let filtered = contacts.filter { contact in
-                let fullName = CNContactFormatter.string(from: contact, style: .fullName) ?? ""
-                return fullName.lowercased().contains(name.lowercased())
-            }
-
-            let results = filtered.map { contact -> [String: Any] in
-                let phones = contact.phoneNumbers.map { label, number in
+            let results = contacts.map { contact -> [String: Any] in
+                let phones = contact.phoneNumbers.map { entry in
                     [
-                        "label": CNLabeledValue<CNPhoneNumber>.localizedString(forLabel: label) ?? "Phone",
-                        "value": number.stringValue
+                        "label": CNLabeledValue<CNPhoneNumber>.localizedString(forLabel: entry.label ?? "") ?? "Phone",
+                        "value": entry.value.stringValue
                     ]
                 }
-                let emails = contact.emailAddresses.map { label, email in
+                let emails = contact.emailAddresses.map { entry in
                     [
-                        "label": CNLabeledValue<NSString>.localizedString(forLabel: label) ?? "Email",
-                        "value": email
+                        "label": CNLabeledValue<NSString>.localizedString(forLabel: entry.label ?? "") ?? "Email",
+                        "value": String(entry.value)
                     ]
                 }
                 return [

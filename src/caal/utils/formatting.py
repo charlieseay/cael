@@ -26,6 +26,10 @@ def strip_markdown_for_tts(text: str) -> str:
     # Remove markdown links [text](url) -> text
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
 
+    # Remove bracketed tool-invocation narration that some models emit
+    # (e.g., "[Calling list_tools with search='calendar']").
+    text = re.sub(r'\[\s*Calling[^\]]*\]', '', text, flags=re.IGNORECASE)
+
     # Remove any remaining standalone asterisks or underscores used as emphasis
     # (in case of unclosed markdown)
     text = re.sub(r'(?<!\w)\*(?!\w)', '', text)  # standalone *

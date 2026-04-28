@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart' as sdk;
+import '../exts.dart';
 
 /// Controller that filters audio subscriptions to only include agent participants.
 /// This prevents hearing other human participants in multi-device setups.
@@ -25,7 +26,7 @@ class AudioFilterCtrl extends ChangeNotifier {
 
   void _filterExistingTracks() {
     for (final participant in room.remoteParticipants.values) {
-      if (participant.kind == sdk.ParticipantKind.AGENT) continue;
+      if (participant.isAgent) continue;
 
       for (final pub in participant.audioTrackPublications) {
         if (pub.track != null) {
@@ -44,7 +45,7 @@ class AudioFilterCtrl extends ChangeNotifier {
     final track = event.track;
 
     if (track.kind != sdk.TrackType.AUDIO) return;
-    if (participant.kind == sdk.ParticipantKind.AGENT) return;
+    if (participant.isAgent) return;
 
     unawaited((track as sdk.RemoteAudioTrack).stop());
     unawaited(event.publication.disable());

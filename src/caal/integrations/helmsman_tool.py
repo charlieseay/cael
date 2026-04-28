@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,8 @@ from typing import Any, Optional
 
 import httpx
 from livekit.agents import function_tool
+
+from .. import mac_actions
 
 logger = logging.getLogger(__name__)
 
@@ -812,6 +815,36 @@ class HelmsmanTools:
             logger.warning(f"append_to_vault_note failed: {e}")
             return f"Could not append to vault: {e}"
 
+    async def _run_osascript(self, script: str, timeout: float = 10.0) -> tuple[int, str, str]:
+        """Run AppleScript locally if possible, otherwise use mac_actions bridge."""
+        if shutil.which("osascript"):
+            try:
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                return result.returncode, result.stdout, result.stderr
+            except subprocess.TimeoutExpired:
+                return -1, "", "Command timed out locally."
+            except Exception as e:
+                return -1, "", str(e)
+
+        # Fallback to mac_actions bridge (via SoniqueBar)
+        try:
+            logger.info("osascript not found locally; routing via mac_actions bridge")
+            action_id = mac_actions.enqueue("run_applescript", {"script": script})
+            # SoniqueBar polls every ~1-2s. Wait up to timeout + buffer.
+            action = await mac_actions.wait_for_completion(action_id, timeout=timeout + 10.0)
+            if action["status"] == "done":
+                return 0, action.get("result", "") or "", ""
+            else:
+                return 1, "", action.get("error") or "Remote execution failed."
+        except Exception as e:
+            logger.warning(f"mac_actions bridge failure: {e}")
+            return -1, "", f"Bridge failure: {e}"
+
     @function_tool
     async def create_calendar_event(
         self,
@@ -861,18 +894,11 @@ end tell
 """
 
         try:
-            result = subprocess.run(
-                ["osascript", "-e", applescript],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
+            return_code, stdout, stderr = await self._run_osascript(applescript, timeout=5)
+            if return_code == 0:
                 return f"Created event: {title}."
             else:
-                return f"Calendar error: {result.stderr or 'Unknown error'}"
-        except subprocess.TimeoutExpired:
-            return "Calendar command timed out."
+                return f"Calendar error: {stderr or 'Unknown error'}"
         except Exception as e:
             logger.warning(f"create_calendar_event failed: {e}")
             return f"Could not create calendar event: {e}"
@@ -902,22 +928,15 @@ end tell
 eventList
 """
         try:
-            result = subprocess.run(
-                ["osascript", "-e", applescript],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                events_text = result.stdout.strip()
+            return_code, stdout, stderr = await self._run_osascript(applescript, timeout=5)
+            if return_code == 0:
+                events_text = stdout.strip()
                 if events_text:
                     return f"Calendar events for the next {days_ahead} day(s): {events_text}"
                 else:
                     return f"No calendar events in the next {days_ahead} day(s)."
             else:
-                return f"Calendar error: {result.stderr or 'Unknown error'}"
-        except subprocess.TimeoutExpired:
-            return "Calendar command timed out."
+                return f"Calendar error: {stderr or 'Unknown error'}"
         except Exception as e:
             logger.warning(f"get_calendar_events failed: {e}")
             return f"Could not fetch calendar events: {e}"
@@ -945,18 +964,11 @@ tell application "Mail"
 end tell
 """
         try:
-            result = subprocess.run(
-                ["osascript", "-e", applescript],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
+            return_code, stdout, stderr = await self._run_osascript(applescript, timeout=5)
+            if return_code == 0:
                 return f"Email sent to {to}."
             else:
-                return f"Mail error: {result.stderr or 'Unknown error'}"
-        except subprocess.TimeoutExpired:
-            return "Mail command timed out."
+                return f"Mail error: {stderr or 'Unknown error'}"
         except Exception as e:
             logger.warning(f"send_email failed: {e}")
             return f"Could not send email: {e}"

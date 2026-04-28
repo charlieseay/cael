@@ -34,7 +34,7 @@
   "settingsTitle": "Settings",
   "@settingsTitle": { "description": "Settings screen title" },
 
-  "caalSetup": "CAAL Setup",
+  "caalSetup": "Sonique Setup",
   "@caalSetup": { "description": "Setup screen title" },
 
   "save": "Save",
@@ -64,7 +64,7 @@
   "serverUrlInvalid": "Enter a valid URL",
   "@serverUrlInvalid": { "description": "Validation error" },
 
-  "yourServerAddress": "Your CAAL server address",
+  "yourServerAddress": "Your Sonique server address",
   "@yourServerAddress": { "description": "Server URL helper text" },
 
   "connectedToServer": "Connected to CAAL server",

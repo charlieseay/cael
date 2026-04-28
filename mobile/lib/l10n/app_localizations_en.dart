@@ -42,7 +42,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTitle => 'Settings';
 
   @override
-  String get caalSetup => 'CAAL Setup';
+  String get caalSetup => 'Sonique Setup';
 
   @override
   String get save => 'Save';
@@ -72,7 +72,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get serverUrlInvalid => 'Enter a valid URL';
 
   @override
-  String get yourServerAddress => 'Your CAAL server address';
+  String get yourServerAddress => 'Your Sonique server address';
 
   @override
   String get connectedToServer => 'Connected to CAAL server';
@@ -249,6 +249,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get languageItalian => 'Italiano';
 
   @override
+  String get languagePortuguese => 'Português';
+
+  @override
+  String get languageDanish => 'Dansk';
+
+  @override
+  String get languageRomanian => 'Română';
+
+  @override
   String get changesNote => 'Note: Model, context size, and wake word changes take effect on next session.';
 
   @override
@@ -321,5 +330,5 @@ class AppLocalizationsEn extends AppLocalizations {
   String get standbyMode => 'Standby';
 
   @override
-  String get sayCaelToWake => 'Say "Hey Cael" to wake up';
+  String get sayCaelToWake => 'Say \"Hey Cael\" to wake up';
 }

@@ -63,19 +63,17 @@ export async function POST(req: Request) {
       extendedSession,
     );
 
-    // Determine the WebSocket URL for the client
-    // Priority:
-    // 1. If HTTPS request and NEXT_PUBLIC_LIVEKIT_URL is set, use it (secure mode)
-    // 2. Otherwise, derive ws:// from request hostname (LAN/mobile HTTP access)
+    // Determine the WebSocket URL for the client.
+    // If NEXT_PUBLIC_LIVEKIT_URL is configured, always honor it so
+    // Tailscale/distributed clients do not get downgraded to ws://host:7880.
+    // Otherwise derive ws:// from request host for local LAN/dev.
     let serverUrl: string;
-    const forwardedProto = req.headers.get('x-forwarded-proto');
-    const isHttps = forwardedProto === 'https' || req.url.startsWith('https://');
-
-    if (isHttps && LIVEKIT_PUBLIC_URL) {
-      // HTTPS request - use configured secure URL (Tailscale/distributed mode)
-      serverUrl = LIVEKIT_PUBLIC_URL;
+    const configuredPublicUrl =
+      LIVEKIT_PUBLIC_URL && LIVEKIT_PUBLIC_URL !== 'auto' ? LIVEKIT_PUBLIC_URL : '';
+    if (configuredPublicUrl) {
+      serverUrl = configuredPublicUrl;
     } else {
-      // HTTP request - derive ws:// from request host for LAN/mobile access
+      // Derive ws:// from request host for LAN/mobile access
       const host = req.headers.get('host') || 'localhost';
       const hostname = host.split(':')[0]; // Remove port if present
       serverUrl = `ws://${hostname}:7880`;
@@ -119,10 +117,10 @@ function createParticipantToken(
   };
   at.addGrant(grant);
 
-  // Always set room config with fast departure timeout for quick reconnect
-  // departureTimeout: seconds to keep room open after last participant leaves (default 20s)
+  // Keep the room alive long enough for mobile network jitter/reconnect.
+  // 1s caused room teardown before agent replies finished.
   at.roomConfig = new RoomConfiguration({
-    departureTimeout: 1, // Close room 1 second after disconnect for fast reconnect
+    departureTimeout: 45,
     ...(agentName && { agents: [{ agentName }] }),
   });
 

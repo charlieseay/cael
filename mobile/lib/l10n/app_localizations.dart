@@ -5,9 +5,12 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
+import 'app_localizations_da.dart';
 import 'app_localizations_en.dart';
 import 'app_localizations_fr.dart';
 import 'app_localizations_it.dart';
+import 'app_localizations_pt.dart';
+import 'app_localizations_ro.dart';
 
 // ignore_for_file: type=lint
 
@@ -91,7 +94,14 @@ abstract class AppLocalizations {
   ];
 
   /// A list of this localizations delegate's supported locales.
-  static const List<Locale> supportedLocales = <Locale>[Locale('en'), Locale('fr'), Locale('it')];
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('da'),
+    Locale('en'),
+    Locale('fr'),
+    Locale('it'),
+    Locale('pt'),
+    Locale('ro')
+  ];
 
   /// Subtitle on welcome screen
   ///
@@ -162,7 +172,7 @@ abstract class AppLocalizations {
   /// Setup screen title
   ///
   /// In en, this message translates to:
-  /// **'CAAL Setup'**
+  /// **'Sonique Setup'**
   String get caalSetup;
 
   /// Save button
@@ -222,7 +232,7 @@ abstract class AppLocalizations {
   /// Server URL helper text
   ///
   /// In en, this message translates to:
-  /// **'Your CAAL server address'**
+  /// **'Your Sonique server address'**
   String get yourServerAddress;
 
   /// Connection success
@@ -561,6 +571,24 @@ abstract class AppLocalizations {
   /// **'Italiano'**
   String get languageItalian;
 
+  /// Portuguese option
+  ///
+  /// In en, this message translates to:
+  /// **'Português'**
+  String get languagePortuguese;
+
+  /// Danish option
+  ///
+  /// In en, this message translates to:
+  /// **'Dansk'**
+  String get languageDanish;
+
+  /// Romanian option
+  ///
+  /// In en, this message translates to:
+  /// **'Română'**
+  String get languageRomanian;
+
   /// Settings note
   ///
   /// In en, this message translates to:
@@ -696,7 +724,7 @@ abstract class AppLocalizations {
   /// Standby wake instruction
   ///
   /// In en, this message translates to:
-  /// **'Say "Hey Cael" to wake up'**
+  /// **'Say \"Hey Cael\" to wake up'**
   String get sayCaelToWake;
 }
 
@@ -709,7 +737,7 @@ class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> 
   }
 
   @override
-  bool isSupported(Locale locale) => <String>['en', 'fr', 'it'].contains(locale.languageCode);
+  bool isSupported(Locale locale) => <String>['da', 'en', 'fr', 'it', 'pt', 'ro'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
@@ -718,12 +746,18 @@ class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> 
 AppLocalizations lookupAppLocalizations(Locale locale) {
   // Lookup logic when only language code is specified.
   switch (locale.languageCode) {
+    case 'da':
+      return AppLocalizationsDa();
     case 'en':
       return AppLocalizationsEn();
     case 'fr':
       return AppLocalizationsFr();
     case 'it':
       return AppLocalizationsIt();
+    case 'pt':
+      return AppLocalizationsPt();
+    case 'ro':
+      return AppLocalizationsRo();
   }
 
   throw FlutterError('AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '

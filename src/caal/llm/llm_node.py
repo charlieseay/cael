@@ -20,9 +20,11 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
+import re
 import shutil
 import time
 from collections.abc import AsyncIterable
@@ -77,6 +79,48 @@ def _tool_is_runtime_usable(tool_name: str) -> bool:
     if tool_name in _OSASCRIPT_REQUIRED_TOOLS and shutil.which("osascript") is None:
         return False
     return True
+
+
+_SMALLTALK_RE = re.compile(
+    r"\b(hi|hello|hey|good\s+morning|good\s+afternoon|good\s+evening|how are you|thanks|thank you)\b",
+    re.IGNORECASE,
+)
+_DIRECT_CHAT_NO_TOOL_RE = re.compile(
+    r"^\s*(hi|hello|hey|good\s+morning|good\s+afternoon|good\s+evening|thanks|thank you|how are you)[!.?\s]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_smalltalk_tool_search(search: Any) -> bool:
+    if not isinstance(search, str):
+        return False
+    text = search.strip().lower()
+    if not text:
+        return False
+    return bool(_SMALLTALK_RE.search(text))
+
+
+def _is_direct_chat_no_tool_intent(user_text: str | None) -> bool:
+    if not user_text:
+        return False
+    return bool(_DIRECT_CHAT_NO_TOOL_RE.match(user_text.strip()))
+
+
+def _allow_discovery_tools(user_text: str | None) -> bool:
+    if not user_text:
+        return False
+    lowered = user_text.lower()
+    triggers = (
+        "search the web",
+        "web search",
+        "look up",
+        "find online",
+        "latest news",
+        "search tools",
+        "list tools",
+        "mcp",
+    )
+    return any(t in lowered for t in triggers)
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
 
@@ -243,6 +287,12 @@ async def llm_node(
         all_tool_names: list[str] = []
         all_tool_params: list[dict] = []
 
+        if _is_direct_chat_no_tool_intent(_last_user if "_last_user" in locals() else None):
+            logger.info("Direct chat intent detected; skipping tools for this turn")
+            tools = None
+
+        allow_discovery_tools = _allow_discovery_tools(_last_user if "_last_user" in locals() else None)
+
         if tools:
             while tool_round < max_tool_rounds:
                 t_llm = time.perf_counter()
@@ -313,20 +363,37 @@ async def llm_node(
                     break  # No content either, fall through to streaming
 
 
+                filtered_tool_calls = response.tool_calls
+                if not allow_discovery_tools:
+                    filtered_tool_calls = [
+                        tc for tc in response.tool_calls
+                        if tc.name not in {"list_tools", "web_search"}
+                    ]
+                    if len(filtered_tool_calls) != len(response.tool_calls):
+                        logger.info("Filtered discovery/search tools for this intent")
+
+                if not filtered_tool_calls:
+                    if response.content:
+                        _emit_usage(agent, provider)
+                        trace.finish()
+                        logger.info(f"LATENCY TRACE: {trace.summary()}")
+                        _store_trace(agent, trace)
+                        yield strip_markdown_for_tts(response.content)
+                        return
+                    break
+
                 # Execute tool calls
                 tool_round += 1
                 logger.info(
                     f"Tool round {tool_round}/{max_tool_rounds}: "
-                    f"{len(response.tool_calls)} call(s)"
+                    f"{len(filtered_tool_calls)} call(s)"
                 )
 
                 # Accumulate tool usage across rounds for frontend indicator
-                all_tool_names.extend(tc.name for tc in response.tool_calls)
-                all_tool_params.extend(tc.arguments for tc in response.tool_calls)
+                all_tool_names.extend(tc.name for tc in filtered_tool_calls)
+                all_tool_params.extend(tc.arguments for tc in filtered_tool_calls)
 
                 if hasattr(agent, "_on_tool_status") and agent._on_tool_status:
-                    import asyncio
-
                     asyncio.create_task(
                         agent._on_tool_status(True, all_tool_names, all_tool_params)
                     )
@@ -335,7 +402,7 @@ async def llm_node(
                 messages = await _execute_tool_calls(
                     agent,
                     messages,
-                    response.tool_calls,
+                    filtered_tool_calls,
                     response.content,
                     provider=provider,
                     tool_data_cache=tool_data_cache,
@@ -368,8 +435,6 @@ async def llm_node(
         # Stream final response (after tool chain or no tools)
         # Only clear tool indicator if no tools were called this turn
         if tool_round == 0 and hasattr(agent, "_on_tool_status") and agent._on_tool_status:
-            import asyncio
-
             asyncio.create_task(agent._on_tool_status(False, [], []))
 
         t_stream = time.perf_counter()
@@ -835,9 +900,38 @@ async def _execute_tool_calls(
     tool_calls = unique_tool_calls
 
     # Execute each tool
+    tool_call_counts: dict[str, int] = {}
     for tool_call in tool_calls:
         tool_name = tool_call.name
         arguments = tool_call.arguments
+        tool_call_counts[tool_name] = tool_call_counts.get(tool_name, 0) + 1
+
+        if tool_call_counts[tool_name] > 2:
+            logger.info("Skipping repeated tool %s (count=%s)", tool_name, tool_call_counts[tool_name])
+            result_message = provider.format_tool_result(
+                content=(
+                    f"Skipped repeated tool call: {tool_name}. "
+                    "Do not retry this tool again in this turn; respond to the user directly."
+                ),
+                tool_call_id=tool_call.id,
+                tool_name=tool_name,
+            )
+            messages.append(result_message)
+            continue
+
+        list_tools_search = arguments.get("search") if isinstance(arguments, dict) else None
+        if tool_name == "list_tools" and _is_smalltalk_tool_search(list_tools_search):
+            result_message = provider.format_tool_result(
+                content=(
+                    "Skipping MCP discovery for small-talk/greeting query. "
+                    "Respond conversationally without tool calls."
+                ),
+                tool_call_id=tool_call.id,
+                tool_name=tool_name,
+            )
+            messages.append(result_message)
+            continue
+
         logger.info(f"Executing tool: {tool_name} with args: {arguments}")
 
         try:
@@ -889,6 +983,18 @@ async def _execute_tool_calls(
                 result_content = json.dumps(tool_result)
             else:
                 result_content = str(tool_result)
+            if (
+                tool_name == "list_tools"
+                and isinstance(tool_result, str)
+                and tool_result.lower().startswith("no tools matched")
+            ):
+                # Avoid conversational dead-ends like "no tools matched your query".
+                # Treat this as a soft signal to continue without MCP tools.
+                result_content = (
+                    "No relevant MCP tools found for this request. "
+                    "Continue with a normal direct response without MCP tool calls "
+                    "unless the user explicitly asks for an external integration."
+                )
 
             result_message = provider.format_tool_result(
                 content=result_content,
@@ -900,6 +1006,11 @@ async def _execute_tool_calls(
         except Exception as e:
             error_msg = f"Error executing tool {tool_name}: {e}"
             logger.error(error_msg, exc_info=True)
+            if "not found" in str(e).lower():
+                error_msg = (
+                    f"Tool {tool_name} is unavailable in this runtime. "
+                    "Do not call this tool again in this turn; continue with a direct response."
+                )
             result_message = provider.format_tool_result(
                 content=error_msg,
                 tool_call_id=tool_call.id,
@@ -922,14 +1033,14 @@ async def _execute_single_tool(agent, tool_name: str, arguments: dict) -> Any:
     # Check Home Assistant tools (callable functions stored in dict)
     if hasattr(agent, "_hass_tool_callables") and tool_name in agent._hass_tool_callables:
         logger.info(f"Calling HASS tool: {tool_name}")
-        result = await agent._hass_tool_callables[tool_name](**arguments)
+        result = await asyncio.wait_for(agent._hass_tool_callables[tool_name](**arguments), timeout=12)
         logger.info(f"HASS tool {tool_name} completed")
         return result
 
     # Check if it's an agent method (decorated on class)
     if hasattr(agent, tool_name) and callable(getattr(agent, tool_name)):
         logger.info(f"Calling agent tool: {tool_name}")
-        result = await getattr(agent, tool_name)(**arguments)
+        result = await asyncio.wait_for(getattr(agent, tool_name)(**arguments), timeout=12)
         logger.info(f"Agent tool {tool_name} completed")
         return result
 
@@ -942,8 +1053,9 @@ async def _execute_single_tool(agent, tool_name: str, arguments: dict) -> Any:
     ):
         logger.info(f"Calling n8n workflow: {tool_name}")
         workflow_name = agent._n8n_workflow_name_map[tool_name]
-        result = await execute_n8n_workflow(
-            agent._n8n_base_url, workflow_name, arguments
+        result = await asyncio.wait_for(
+            execute_n8n_workflow(agent._n8n_base_url, workflow_name, arguments),
+            timeout=12,
         )
         logger.info(f"n8n workflow {tool_name} completed")
         return result

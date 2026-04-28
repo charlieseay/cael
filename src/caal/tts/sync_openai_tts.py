@@ -7,7 +7,11 @@ synchronous requests wrapped in asyncio.run_in_executor.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import os
+import time
+import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -58,7 +62,8 @@ class SyncOpenAITTS(tts.TTS):
             api_key=api_key,
             response_format=response_format,
         )
-        self._executor = ThreadPoolExecutor(max_workers=4)
+        max_workers = max(2, int(os.getenv("CAAL_TTS_MAX_WORKERS", "6")))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
     def synthesize(
         self, text: str, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS
@@ -114,6 +119,7 @@ class SyncChunkedStream(tts.ChunkedStream):
         logger.debug(f"Requesting: {url} with model={opts.model}, voice={opts.voice}")
 
         try:
+            started_at = time.perf_counter()
             response = requests.post(
                 url,
                 headers=headers,
@@ -145,6 +151,7 @@ class SyncChunkedStream(tts.ChunkedStream):
                 return
 
             audio_bytes = response.content or b""
+            request_ms = (time.perf_counter() - started_at) * 1000
             if not audio_bytes:
                 loop.call_soon_threadsafe(
                     out_q.put_nowait, APIConnectionError("TTS returned empty audio body")
@@ -160,7 +167,13 @@ class SyncChunkedStream(tts.ChunkedStream):
                 )
                 return
             loop.call_soon_threadsafe(out_q.put_nowait, audio_bytes)
-            logger.debug(f"Fetched {len(audio_bytes)} bytes of audio")
+            logger.info(
+                "TTS_METRIC request_ms=%.0f bytes=%d format=%s voice=%s",
+                request_ms,
+                len(audio_bytes),
+                opts.response_format,
+                opts.voice,
+            )
 
         except requests.exceptions.Timeout:
             loop.call_soon_threadsafe(
@@ -191,13 +204,7 @@ class SyncChunkedStream(tts.ChunkedStream):
             self._tts._executor,
             partial(self._fetch_chunks, self.input_text, opts, timeout, out_q, loop),
         )
-
-        output_emitter.initialize(
-            request_id="sync-tts",
-            sample_rate=SAMPLE_RATE,
-            num_channels=NUM_CHANNELS,
-            mime_type=f"audio/{opts.response_format}",
-        )
+        initialized = False
 
         try:
             while True:
@@ -206,6 +213,24 @@ class SyncChunkedStream(tts.ChunkedStream):
                     break
                 if isinstance(item, Exception):
                     raise item
+                if not initialized:
+                    sample_rate = SAMPLE_RATE
+                    num_channels = NUM_CHANNELS
+                    if opts.response_format == "wav":
+                        try:
+                            with wave.open(io.BytesIO(item), "rb") as wav_file:
+                                sample_rate = wav_file.getframerate() or SAMPLE_RATE
+                                num_channels = wav_file.getnchannels() or NUM_CHANNELS
+                        except Exception as e:
+                            logger.warning(f"Could not read WAV header, using defaults: {e}")
+
+                    output_emitter.initialize(
+                        request_id="sync-tts",
+                        sample_rate=sample_rate,
+                        num_channels=num_channels,
+                        mime_type=f"audio/{opts.response_format}",
+                    )
+                    initialized = True
                 output_emitter.push(item)
 
             output_emitter.flush()

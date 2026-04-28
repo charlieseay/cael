@@ -870,12 +870,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             if trace and trace.total_ms > 0:
                 tts_ms = latency_ms - trace.total_ms
                 logger.info(
-                    f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms "
-                    f"[llm_node={trace.total_ms:.0f} tts={tts_ms:.0f}] "
+                    f"VOICE_LATENCY stt_ms=na llm_ms={trace.total_ms:.0f} "
+                    f"tts_gen_ms=see_TTS_METRIC tts_play_start_ms={latency_ms:.0f} "
+                    f"tts_residual_ms={tts_ms:.0f} "
                     f"({trace.summary()})"
                 )
             else:
-                logger.info(f"ROUND-TRIP LATENCY: {latency_ms:.0f}ms (LLM + TTS)")
+                logger.info(
+                    f"VOICE_LATENCY stt_ms=na llm_ms=na tts_gen_ms=see_TTS_METRIC "
+                    f"tts_play_start_ms={latency_ms:.0f}"
+                )
 
             _transcription_time = None
 
@@ -1129,9 +1133,57 @@ def preload_models():
         except Exception as e:
             logger.warning(f"  Failed to preload LLM: {e}")
 
-    # Run preloads in parallel (STT + LLM are independent services)
+    def _preload_tts():
+        language = settings.get("language", "en")
+        requested_provider = settings.get("tts_provider", "auto")
+        selected_provider = requested_provider
+
+        if selected_provider == "auto":
+            if language == "en" and _is_kokoro_healthy():
+                selected_provider = "kokoro"
+            else:
+                selected_provider = "piper"
+
+        if (
+            selected_provider == "piper"
+            and language == "en"
+            and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
+            and _is_kokoro_healthy()
+        ):
+            selected_provider = "kokoro"
+
+        if selected_provider == "kokoro":
+            tts_url = f"{os.getenv('KOKORO_URL', KOKORO_URL).rstrip('/')}/v1/audio/speech"
+            voice = settings.get("tts_voice_kokoro", "am_puck")
+            model = "kokoro"
+        else:
+            tts_url = f"{os.getenv('PIPER_URL', PIPER_URL).rstrip('/')}/v1/audio/speech"
+            voice = settings.get("tts_voice_piper", "speaches-ai/piper-en_US-ryan-high")
+            model = voice
+
+        try:
+            logger.info(f"  Warming TTS: {selected_provider} ({voice})")
+            response = requests.post(
+                tts_url,
+                json={
+                    "model": model,
+                    "input": "ready",
+                    "voice": voice,
+                    "speed": TTS_SPEED,
+                    "response_format": "wav",
+                },
+                timeout=30,
+            )
+            if response.status_code == 200 and response.content:
+                logger.info("  TTS ready")
+            else:
+                logger.warning(f"  TTS warmup returned {response.status_code}")
+        except Exception as e:
+            logger.warning(f"  Failed to preload TTS model: {e}")
+
+    # Run preloads in parallel (STT + LLM + TTS are independent services)
     futures = []
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         if stt_provider == "groq":
             logger.info("  Skipping STT preload (using Groq)")
         else:
@@ -1141,6 +1193,8 @@ def preload_models():
             logger.info(f"  Skipping LLM preload (using {llm_provider})")
         else:
             futures.append(pool.submit(_preload_llm))
+
+        futures.append(pool.submit(_preload_tts))
 
         # Wait for all preloads to complete
         for f in as_completed(futures):

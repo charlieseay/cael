@@ -817,21 +817,22 @@ class HelmsmanTools:
 
     async def _run_osascript(self, script: str, timeout: float = 10.0) -> tuple[int, str, str]:
         """Run AppleScript locally if possible, otherwise use mac_actions bridge."""
-        if shutil.which("osascript"):
+        osascript_path = shutil.which("osascript")
+        if osascript_path:
             try:
                 result = subprocess.run(
-                    ["osascript", "-e", script],
+                    [osascript_path, "-e", script],
                     capture_output=True,
                     text=True,
                     timeout=timeout,
                 )
                 return result.returncode, result.stdout, result.stderr
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                # Fall through to mac_actions bridge if osascript fails locally
-                logger.info("osascript failed or not available locally; routing via mac_actions bridge")
+            except subprocess.TimeoutExpired:
+                logger.info("osascript timed out; routing via mac_actions bridge")
+            except (FileNotFoundError, OSError) as e:
+                logger.info(f"osascript not available at runtime ({e}); routing via mac_actions bridge")
             except Exception as e:
                 logger.warning(f"osascript error: {e}")
-                # Fall through to mac_actions bridge
         else:
             logger.info("osascript not found in PATH; routing via mac_actions bridge")
 

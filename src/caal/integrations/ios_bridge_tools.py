@@ -2,6 +2,8 @@
 
 These tools let the LLM agent delegate native iOS operations (calendar reads,
 iMessage compose) to the user's iPhone without breaking conversation flow.
+They are device-local fallbacks: host/SoniqueBar connected-service tools should
+be preferred when both paths are available.
 
 The bridge works over the LiveKit data channel:
   query_ios_calendar  → publishes `request_ios_calendar` to the room,
@@ -24,6 +26,8 @@ Adding new capabilities requires:
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import logging
 
 from livekit.agents import function_tool
@@ -61,7 +65,12 @@ CAPABILITY_MANIFEST = {
 
 
 class iOSBridgeTools:
-    """Mixin providing native iOS on-device tools for the voice/chat agent."""
+    """Mixin providing native iOS on-device tools for the voice/chat agent.
+
+    Routing intent:
+    - Prefer host/SoniqueBar tools for connected services.
+    - Use iOS bridge tools for iPhone-local resources or explicit iPhone actions.
+    """
 
     @function_tool
     async def query_ios_calendar(
@@ -86,10 +95,55 @@ class iOSBridgeTools:
             iOS device is unavailable or times out.
         """
         if not hasattr(self, "_on_ios_calendar_query") or self._on_ios_calendar_query is None:
-            return '{"error": "iOS calendar integration is not configured."}'
+            return await self._fallback_calendar_query(start_date, end_date)
 
         logger.info(f"query_ios_calendar: {start_date!r} → {end_date!r}")
-        return await self._on_ios_calendar_query(start_date, end_date)
+        result = await self._on_ios_calendar_query(start_date, end_date)
+        if self._result_needs_calendar_fallback(result):
+            logger.info("query_ios_calendar: iOS bridge unavailable, using server-side fallback")
+            return await self._fallback_calendar_query(start_date, end_date)
+        return result
+
+    @staticmethod
+    def _result_needs_calendar_fallback(raw_result: str) -> bool:
+        """True when iOS bridge could not satisfy the calendar request."""
+        try:
+            payload = json.loads(raw_result)
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        error = str(payload.get("error", "")).lower()
+        return any(
+            hint in error
+            for hint in (
+                "not configured",
+                "timed out",
+                "device may not be connected",
+                "failed to request i",
+            )
+        )
+
+    async def _fallback_calendar_query(self, start_date: str, end_date: str) -> str:
+        """Fallback to host/server-side calendar tooling when iOS bridge fails."""
+        if not hasattr(self, "get_calendar_events"):
+            return '{"error": "No calendar provider is currently available."}'
+        try:
+            start = dt.date.fromisoformat(start_date)
+            end = dt.date.fromisoformat(end_date)
+            if end < start:
+                end = start
+            days_ahead = max(1, (end - dt.date.today()).days + 1)
+            host_result = await self.get_calendar_events(days_ahead=days_ahead)
+            return json.dumps(
+                {
+                    "source": "host_calendar_fallback",
+                    "result": host_result,
+                }
+            )
+        except Exception as e:
+            logger.warning(f"calendar fallback failed: {e}")
+            return json.dumps({"error": f"Calendar fallback failed: {e}"})
 
     @function_tool
     async def compose_ios_message(

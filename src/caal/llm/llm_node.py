@@ -43,6 +43,17 @@ __all__ = ["llm_node", "ToolDataCache", "LatencyTrace"]
 # newly loaded servers and changed tool sets are picked up without a restart.
 _TOOL_CACHE_TTL = 600.0
 
+# iOS bridge tools are device-local fallbacks. Keep them available, but push
+# them to the end of the tool list so host-connected services are preferred.
+_IOS_BRIDGE_TOOL_NAMES = {
+    "query_ios_calendar",
+    "query_ios_contacts",
+    "query_ios_directions",
+    "query_ios_location",
+    "compose_ios_message",
+    "make_ios_phone_call",
+}
+
 
 class LatencyTrace:
     """Collects per-phase timing for a single llm_node() call."""
@@ -589,6 +600,24 @@ async def _discover_tools(agent, provider: LLMProvider | None = None) -> list[di
     # Add agent-level tools (memory_short, web_search — non-LiveKit callers)
     if hasattr(agent, "_agent_tool_definitions") and agent._agent_tool_definitions:
         tools.extend(agent._agent_tool_definitions)
+
+    # Routing policy: host-connected services first, iOS bridge tools last.
+    if tools:
+        host_tools: list[dict] = []
+        ios_tools: list[dict] = []
+        for tool in tools:
+            name = tool.get("function", {}).get("name", "")
+            if name in _IOS_BRIDGE_TOOL_NAMES:
+                desc = tool.get("function", {}).get("description", "") or ""
+                if "iOS-only fallback" not in desc:
+                    tool["function"]["description"] = (
+                        "iOS-only fallback (device-local). Prefer host/SoniqueBar "
+                        "connected-service tools first. " + desc
+                    ).strip()
+                ios_tools.append(tool)
+            else:
+                host_tools.append(tool)
+        tools = host_tools + ios_tools
 
     # Let provider transform tools for its model (e.g. strip descriptions
     # for FunctionGemma).  Applied once before caching.

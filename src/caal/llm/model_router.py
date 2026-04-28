@@ -251,6 +251,11 @@ class RouterConfig:
     think: bool = False
     temperature: float = 0.15
     num_ctx: int = 8192
+    openai_base_url: str = "http://localhost:8000/v1"
+    openai_api_key: str | None = None
+    openrouter_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    google_api_key: str | None = None
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -319,33 +324,35 @@ class ModelRouter:
 
         changed = False
 
-        new_simple = _match_model(
-            available,
-            self._config.simple_preferences,
-            self._config.simple_model,
-        )
-        if new_simple != self._config.simple_model:
-            logger.info(
-                f"ModelRouter: simple tier updated "
-                f"{self._config.simple_model!r} → {new_simple!r}"
+        if self._config.simple_provider == "ollama":
+            new_simple = _match_model(
+                available,
+                self._config.simple_preferences,
+                self._config.simple_model,
             )
-            self._config.simple_model = new_simple
-            self._providers.pop(SIMPLE, None)
-            changed = True
+            if new_simple != self._config.simple_model:
+                logger.info(
+                    f"ModelRouter: simple tier updated "
+                    f"{self._config.simple_model!r} → {new_simple!r}"
+                )
+                self._config.simple_model = new_simple
+                self._providers.pop(SIMPLE, None)
+                changed = True
 
-        new_medium = _match_model(
-            available,
-            self._config.medium_preferences,
-            self._config.medium_model,
-        )
-        if new_medium != self._config.medium_model:
-            logger.info(
-                f"ModelRouter: medium tier updated "
-                f"{self._config.medium_model!r} → {new_medium!r}"
+        if self._config.medium_provider == "ollama":
+            new_medium = _match_model(
+                available,
+                self._config.medium_preferences,
+                self._config.medium_model,
             )
-            self._config.medium_model = new_medium
-            self._providers.pop(MEDIUM, None)
-            changed = True
+            if new_medium != self._config.medium_model:
+                logger.info(
+                    f"ModelRouter: medium tier updated "
+                    f"{self._config.medium_model!r} → {new_medium!r}"
+                )
+                self._config.medium_model = new_medium
+                self._providers.pop(MEDIUM, None)
+                changed = True
 
         if changed:
             logger.info(
@@ -370,6 +377,15 @@ class ModelRouter:
             kwargs["base_url"] = self._config.ollama_host
             kwargs["think"] = self._config.think
             kwargs["num_ctx"] = self._config.num_ctx
+        elif name == "openai_compatible":
+            kwargs["base_url"] = self._config.openai_base_url
+            kwargs["api_key"] = self._config.openai_api_key
+        elif name == "openrouter":
+            kwargs["api_key"] = self._config.openrouter_api_key
+        elif name == "anthropic":
+            kwargs["api_key"] = self._config.anthropic_api_key
+        elif name == "google":
+            kwargs["api_key"] = self._config.google_api_key
 
         labels = {SIMPLE: "simple", MEDIUM: "medium", COMPLEX: "complex"}
         logger.debug(f"ModelRouter: creating {name}/{model} for {labels[tier]} tier")
@@ -454,5 +470,10 @@ def create_router_from_settings(settings: dict[str, Any]) -> ModelRouter:
         think=settings.get("think", False),
         temperature=settings.get("temperature", 0.15),
         num_ctx=settings.get("num_ctx", 8192),
+        openai_base_url=settings.get("openai_base_url", "http://localhost:8000/v1"),
+        openai_api_key=settings.get("openai_api_key"),
+        openrouter_api_key=settings.get("openrouter_api_key"),
+        anthropic_api_key=settings.get("anthropic_api_key"),
+        google_api_key=settings.get("google_api_key"),
     )
     return ModelRouter(config)

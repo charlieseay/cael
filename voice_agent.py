@@ -613,9 +613,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         )
     else:
         # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess
+        kokoro_model = "kokoro"
         tts_instance = SyncOpenAITTS(
             base_url=f"{KOKORO_URL}/v1",
-            model=TTS_MODEL,
+            model=kokoro_model,
             voice=runtime["tts_voice_kokoro"],
             speed=TTS_SPEED,
         )

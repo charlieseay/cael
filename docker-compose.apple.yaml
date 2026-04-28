@@ -151,6 +151,7 @@ services:
       - WHISPER_MODEL=Systran/faster-whisper-small
       # TTS Kokoro via mlx-audio on host (optional, for English)
       - KOKORO_URL=${MLX_AUDIO_URL:-http://host.docker.internal:8880}
+      - CAAL_TTS_FORCE_PIPER=true
       - TTS_MODEL=${TTS_MODEL:-prince-canuma/Kokoro-82M}
       - TTS_VOICE=${TTS_VOICE:-af_heart}
       # LightRAG knowledge base (organic memory layer)

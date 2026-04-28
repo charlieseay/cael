@@ -23,6 +23,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import shutil
 import time
 from collections.abc import AsyncIterable
 from typing import TYPE_CHECKING, Any
@@ -65,6 +66,20 @@ _IOS_HOST_EQUIVALENT_TOOL_PREFIXES: dict[str, tuple[str, ...]] = {
     "compose_ios_message": ("send_message", "imessage", "sms", "message"),
     "make_ios_phone_call": ("phone_call", "call_contact", "dial"),
 }
+
+_IOS_GLOBAL_RESOURCE_TOOLS = {
+    "query_ios_calendar",
+    "query_ios_contacts",
+    "query_ios_directions",
+    "query_ios_location",
+    "compose_ios_message",
+    "make_ios_phone_call",
+}
+
+
+def _mac_bridge_available(host_tool_names: set[str]) -> bool:
+    # SoniqueBar-backed host actions exposed via MacControlTools.
+    return any(name.startswith("mac_") for name in host_tool_names)
 
 
 class LatencyTrace:
@@ -459,6 +474,15 @@ def _strip_tool_messages(messages: list[dict]) -> list[dict]:
 
 
 def _host_equivalent_exists(ios_tool_name: str, host_tool_names: set[str]) -> bool:
+    # Global host resources should prefer SoniqueBar/macOS bridge when available.
+    if ios_tool_name in _IOS_GLOBAL_RESOURCE_TOOLS and _mac_bridge_available(host_tool_names):
+        return True
+
+    # Docker/Linux agent containers cannot execute macOS automation tools.
+    # If osascript is unavailable, keep iOS bridge calendar fallback visible.
+    if ios_tool_name == "query_ios_calendar" and "get_calendar_events" in host_tool_names:
+        if shutil.which("osascript") is None:
+            return False
     prefixes = _IOS_HOST_EQUIVALENT_TOOL_PREFIXES.get(ios_tool_name, ())
     if not prefixes:
         return False

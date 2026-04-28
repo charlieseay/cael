@@ -75,8 +75,8 @@ class iOSBridgeTools:
     @function_tool
     async def query_ios_calendar(
         self,
-        start_date: str,
-        end_date: str,
+        start_date: str = "",
+        end_date: str = "",
     ) -> str:
         """Read calendar events from the user's iPhone for a date range.
 
@@ -94,6 +94,8 @@ class iOSBridgeTools:
             JSON string with an "events" array, or an error message if the
             iOS device is unavailable or times out.
         """
+        start_date, end_date = self._normalize_calendar_range(start_date, end_date)
+
         if not hasattr(self, "_on_ios_calendar_query") or self._on_ios_calendar_query is None:
             return await self._fallback_calendar_query(start_date, end_date)
 
@@ -103,6 +105,26 @@ class iOSBridgeTools:
             logger.info("query_ios_calendar: iOS bridge unavailable, using server-side fallback")
             return await self._fallback_calendar_query(start_date, end_date)
         return result
+
+    @staticmethod
+    def _normalize_calendar_range(start_date: str, end_date: str) -> tuple[str, str]:
+        """Normalize optional/invalid date inputs to a safe ISO range."""
+        today = dt.date.today()
+
+        def _safe_parse(raw: str) -> dt.date | None:
+            raw = (raw or "").strip()
+            if not raw:
+                return None
+            try:
+                return dt.date.fromisoformat(raw)
+            except Exception:
+                return None
+
+        start = _safe_parse(start_date) or today
+        end = _safe_parse(end_date) or start
+        if end < start:
+            end = start
+        return start.isoformat(), end.isoformat()
 
     @staticmethod
     def _result_needs_calendar_fallback(raw_result: str) -> bool:

@@ -337,6 +337,22 @@ async def llm_node(
                 logger.warning(
                     f"Hit max tool rounds ({max_tool_rounds}), streaming response"
                 )
+                # Hard stop tool orchestration when we've hit the round cap.
+                # Stream from a cleaned transcript without tools so the model
+                # cannot emit another function-call skeleton to the user.
+                t_stream = time.perf_counter()
+                clean_messages = _strip_tool_messages(messages)
+                async for chunk in provider.chat_stream(messages=clean_messages):
+                    yield strip_markdown_for_tts(chunk)
+                trace.stream_ms = (time.perf_counter() - t_stream) * 1000
+                _emit_usage(agent, provider)
+                trace.finish()
+                logger.info(f"LATENCY TRACE: {trace.summary()}")
+                _store_trace(agent, trace)
+                if _router is not None and _routed_tier is not None and trace.llm_rounds:
+                    total_llm_ms = sum(trace.llm_rounds)
+                    _router.record(_routed_tier, total_llm_ms, success=True)
+                return
 
         # Stream final response (after tool chain or no tools)
         # Only clear tool indicator if no tools were called this turn
@@ -347,13 +363,12 @@ async def llm_node(
 
         t_stream = time.perf_counter()
         if tool_round > 0:
-            # After tool execution — pass tools so Ollama can validate
-            # tool_calls in message history
+            # After tool execution, stream from cleaned messages without tools
+            # to avoid leaking function-call syntax in spoken output.
             logger.info("Streaming response after tool execution...")
             try:
-                async for chunk in provider.chat_stream(
-                    messages=messages, tools=tools
-                ):
+                clean_messages = _strip_tool_messages(messages)
+                async for chunk in provider.chat_stream(messages=clean_messages):
                     yield strip_markdown_for_tts(chunk)
             except Exception as stream_err:
                 failover = await _failover_provider(stream_err)

@@ -106,6 +106,10 @@ DEFAULT_SETTINGS = {
     # Turn detection settings (advanced)
     "allow_interruptions": True,  # Whether user can interrupt agent mid-speech
     "min_endpointing_delay": 0.5,  # Seconds to wait before considering turn complete
+    # VAD CPU/latency tuning (silero)
+    "vad_sample_rate": 8000,  # 8000 reduces CPU vs 16000 on constrained hosts
+    "vad_activation_threshold": 0.65,  # Higher threshold reduces false positives/churn
+    "vad_min_silence_duration": 0.7,  # Slightly longer silence before turn close
     # OpenAI-compatible settings (any OpenAI-compatible server)
     "openai_api_key": "",         # Optional API key for authenticated servers
     "openai_base_url": "",        # Server URL (empty = not configured)

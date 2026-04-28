@@ -229,6 +229,9 @@ def get_runtime_settings() -> dict:
         # Turn detection settings
         "allow_interruptions": settings.get("allow_interruptions", True),
         "min_endpointing_delay": settings.get("min_endpointing_delay", 0.5),
+        "vad_sample_rate": settings.get("vad_sample_rate", 8000),
+        "vad_activation_threshold": settings.get("vad_activation_threshold", 0.65),
+        "vad_min_silence_duration": settings.get("vad_min_silence_duration", 0.7),
     }
 
 
@@ -450,6 +453,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         f"  Turn detection: interruptions={runtime['allow_interruptions']}, "
         f"endpointing_delay={runtime['min_endpointing_delay']}s"
     )
+    logger.info(
+        f"  VAD: sample_rate={runtime['vad_sample_rate']} "
+        f"activation={runtime['vad_activation_threshold']} "
+        f"min_silence={runtime['vad_min_silence_duration']}s"
+    )
     logger.info("=" * 60)
 
     # Build STT - Speaches (local) or Groq (cloud)
@@ -619,7 +627,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         stt=stt_instance,
         llm=caal_llm,
         tts=tts_instance,
-        vad=silero.VAD.load(),
+        vad=silero.VAD.load(
+            sample_rate=runtime["vad_sample_rate"],
+            activation_threshold=runtime["vad_activation_threshold"],
+            min_silence_duration=runtime["vad_min_silence_duration"],
+        ),
         allow_interruptions=runtime["allow_interruptions"],
         min_endpointing_delay=runtime["min_endpointing_delay"],
     )

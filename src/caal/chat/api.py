@@ -18,9 +18,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import httpx
 import json
 import logging
 import os
+import re
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -28,11 +30,18 @@ from pydantic import BaseModel
 
 from .. import CAALLLM
 from .. import settings as settings_module
+from ..deterministic_intents import (
+    looks_like_network_status_request,
+    looks_like_project_list_request,
+    network_status_summary,
+    try_projects_inventory_fallback,
+)
 from ..context import ChatContext, ToolContext
 from ..integrations import load_mcp_config
 from ..integrations.n8n import clear_caches as clear_n8n_caches
 from ..llm import llm_node
 from ..memory import ShortTermMemory
+from ..routing.policy import policy_from_settings
 from ..utils.formatting import strip_markdown_for_tts
 from .session import PERSISTENT_SESSION_ID, ChatSession, ChatSessionManager
 
@@ -118,6 +127,7 @@ _max_turns: int = 20
 
 # Serialize llm_node() calls — it mutates agent._llm_tools_cache
 _request_lock = asyncio.Lock()
+_LEAKED_TOOL_PREFIX_RE = re.compile(r"^:\w+\([^)]*\):\s*", re.MULTILINE)
 
 
 def _get_runtime_settings() -> dict:
@@ -306,6 +316,28 @@ def _estimate_tokens(text: str) -> int:
     return int(words * 1.3)
 
 
+def _looks_like_routing_policy_request(text: str) -> bool:
+    t = (text or "").lower()
+    return "routing policy" in t or ("routing" in t and "tier" in t)
+
+
+def _routing_policy_response_text() -> str:
+    runtime = _get_runtime_settings()
+    policy = policy_from_settings(runtime)
+    tiers = policy.get("tiers", [])
+    parts = []
+    for tier in tiers:
+        parts.append(
+            f"{tier.get('label','tier')} -> {tier.get('provider','unknown')} ({tier.get('model','unknown')})"
+        )
+    return "Current Sonique routing policy: " + "; ".join(parts)
+
+
+def _sanitize_response_text(text: str) -> str:
+    cleaned = _LEAKED_TOOL_PREFIX_RE.sub("", text or "").strip()
+    return cleaned or (text or "")
+
+
 def _build_debug_info(
     *,
     session: ChatSession,
@@ -392,6 +424,34 @@ async def chat(req: ChatRequest) -> ChatResponse:
     assert _llm is not None
     assert _prompt is not None
 
+    if looks_like_project_list_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        projects_fallback = await try_projects_inventory_fallback(req.text)
+        return ChatResponse(
+            response=projects_fallback or "Project inventory is unavailable right now.",
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
+    if looks_like_network_status_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        return ChatResponse(
+            response=network_status_summary(),
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
+    if _looks_like_routing_policy_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        return ChatResponse(
+            response=_routing_policy_response_text(),
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
     # Resolve session: explicit id > reuse latest > create new
     sid = req.session_id
     if sid is None and req.reuse_session:
@@ -405,6 +465,16 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     # Add user message to session history
     session.add_message(role="user", content=req.text)
+
+    projects_fallback = await try_projects_inventory_fallback(req.text)
+    if projects_fallback:
+        session.add_message(role="assistant", content=projects_fallback)
+        return ChatResponse(
+            response=projects_fallback,
+            tool_calls=[],
+            session_id=session.session_id,
+            debug=None,
+        )
 
     # Build chat context (same structure as voice path)
     chat_ctx = ChatContext(
@@ -462,7 +532,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
             _tool_context._on_tool_status = None
             _tool_context._on_usage = None
 
-    response_text = strip_markdown_for_tts("".join(response_chunks)).strip()
+    response_text = _sanitize_response_text(
+        strip_markdown_for_tts("".join(response_chunks)).strip()
+    )
     tool_calls = list(tool_calls_log)
 
     # Add assistant response to session history
@@ -504,6 +576,57 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     assert _llm is not None
     assert _prompt is not None
 
+    if looks_like_project_list_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        text = await try_projects_inventory_fallback(req.text) or "Project inventory is unavailable right now."
+
+        async def projects_guard_generate():
+            yield f"data: {json.dumps({'text': text})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            projects_guard_generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Session-Id": sid,
+            },
+        )
+
+    if looks_like_network_status_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        text = network_status_summary()
+
+        async def network_guard_generate():
+            yield f"data: {json.dumps({'text': text})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            network_guard_generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Session-Id": sid,
+            },
+        )
+
+    if _looks_like_routing_policy_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+
+        async def generate_policy():
+            text = _routing_policy_response_text()
+            yield f"data: {json.dumps({'text': text})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate_policy(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Session-Id": sid,
+            },
+        )
+
     sid = req.session_id
     if sid is None and req.reuse_session:
         latest = _session_manager.get_latest_session()
@@ -512,6 +635,23 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 
     session = _session_manager.get_or_create(session_id=sid, max_turns=_max_turns)
     session.add_message(role="user", content=req.text)
+
+    projects_fallback = await try_projects_inventory_fallback(req.text)
+    if projects_fallback:
+        session.add_message(role="assistant", content=projects_fallback)
+
+        async def generate_projects():
+            yield f"data: {json.dumps({'text': projects_fallback})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate_projects(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Session-Id": session.session_id,
+            },
+        )
 
     chat_ctx = ChatContext(
         system_prompt=_prompt,
@@ -541,7 +681,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 logger.error(f"chat_stream error: {e}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        full_response = "".join(collected)
+        full_response = _sanitize_response_text("".join(collected))
         session.add_message(role="assistant", content=full_response)
         yield "data: [DONE]\n\n"
 

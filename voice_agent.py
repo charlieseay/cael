@@ -67,10 +67,17 @@ from caal.integrations import (  # noqa: E402
     load_mcp_config,
 )
 from caal.integrations.mcp_loader import LazyMCPServer  # noqa: E402
-from caal.llm import ToolDataCache, llm_node  # noqa: E402
+from caal.deterministic_intents import (  # noqa: E402
+    looks_like_network_status_request,
+    looks_like_project_list_request,
+    network_status_summary,
+    try_projects_inventory_fallback,
+)
+from caal.llm import ToolDataCache, llm_node as run_llm_node  # noqa: E402
 from caal.memory import ShortTermMemory  # noqa: E402
 from caal.stt import WakeWordGatedSTT  # noqa: E402
 from caal.tts.sync_openai_tts import SyncOpenAITTS  # noqa: E402
+from caal.utils.formatting import strip_markdown_for_tts  # noqa: E402
 
 # Configure logging - LiveKit adds LogQueueHandler to root in worker processes,
 # so we use non-propagating loggers with our own handler to avoid duplicates
@@ -253,6 +260,21 @@ def load_prompt(language: str = "en") -> str:
 # Agent Definition
 # =============================================================================
 
+def _last_user_utterance_text(chat_ctx) -> str:
+    """Best-effort extract of the latest user message from LiveKit chat context."""
+    items = getattr(chat_ctx, "items", None) or []
+    for item in reversed(list(items)):
+        if getattr(item, "role", None) != "user":
+            continue
+        raw = getattr(item, "text_content", None)
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if s:
+            return s
+    return ""
+
+
 # Type alias for tool status callback
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
@@ -327,7 +349,16 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, Mac
 
     async def llm_node(self, chat_ctx, tools, model_settings):
         """Custom LLM node using provider-agnostic interface."""
-        async for chunk in llm_node(
+        user_text = _last_user_utterance_text(chat_ctx)
+        if looks_like_network_status_request(user_text):
+            yield strip_markdown_for_tts(network_status_summary())
+            return
+        if looks_like_project_list_request(user_text):
+            reply = await try_projects_inventory_fallback(user_text)
+            if reply:
+                yield strip_markdown_for_tts(reply)
+                return
+        async for chunk in run_llm_node(
             self,
             chat_ctx,
             provider=self._provider,

@@ -374,6 +374,66 @@ async def receive_network_state(req: NetworkStateRequest) -> None:
                 req.connection, req.isExpensive, req.isConstrained)
 
 
+class ConnectionDetailsRequest(BaseModel):
+    """Request body for /api/connection-details endpoint."""
+    extended_session: bool = False
+    room_config: dict = {}
+
+
+class ConnectionDetailsResponse(BaseModel):
+    """Response body for /api/connection-details endpoint."""
+    serverUrl: str
+    participantToken: str
+
+
+@app.post("/api/connection-details", response_model=ConnectionDetailsResponse)
+async def get_connection_details(req: ConnectionDetailsRequest) -> ConnectionDetailsResponse:
+    """Get LiveKit connection details for iOS client.
+
+    Mints a LiveKit access token and returns the server URL and token.
+    The iOS client uses these to connect to the voice session.
+
+    Args:
+        req: ConnectionDetailsRequest with extended_session flag and room_config
+
+    Returns:
+        ConnectionDetailsResponse with serverUrl and participantToken
+    """
+    lk_url = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
+    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+    room_name = "voice_assistant_room"
+
+    # TTL: 4h for extended session, 15min for standard
+    ttl = 14400 if req.extended_session else 900
+
+    try:
+        # Mint access token
+        token = (
+            api.AccessToken(api_key, api_secret)
+            .with_grants(api.VideoGrants(room_join=True, room=room_name))
+            .with_ttl(ttl)
+            .to_jwt()
+        )
+    except Exception as e:
+        logger.error(f"Failed to mint LiveKit token: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate access token")
+
+    # Dispatch agent to room if possible (non-fatal if fails)
+    try:
+        lk = get_livekit_api()
+        await lk.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(room_name=room_name, agent_name="caal")
+        )
+        await lk.aclose()
+    except Exception as e:
+        # Agent may already be running or dispatch client not configured — don't fail
+        logger.debug(f"Agent dispatch (non-fatal): {e}")
+
+    logger.info(f"Issued LiveKit token for room {room_name} (extended={req.extended_session})")
+    return ConnectionDetailsResponse(serverUrl=lk_url, participantToken=token)
+
+
 # =============================================================================
 # Settings Endpoints
 # =============================================================================

@@ -1,3 +1,22 @@
 {
-  "servers": []
+  "servers": [
+    {
+      "name": "n8n",
+      "url": "http://host.docker.internal:3700/n8n/mcp",
+      "transport": "streamable_http",
+      "timeout": 15.0
+    },
+    {
+      "name": "ha",
+      "url": "http://host.docker.internal:3700/ha/mcp",
+      "transport": "streamable_http",
+      "timeout": 10.0
+    },
+    {
+      "name": "vault",
+      "url": "http://host.docker.internal:3700/vault/mcp",
+      "transport": "streamable_http",
+      "timeout": 10.0
+    }
+  ]
 }

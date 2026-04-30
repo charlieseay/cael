@@ -151,7 +151,17 @@ async def try_projects_inventory_fallback(text: str) -> str | None:
             resp = await client.get(url)
             resp.raise_for_status()
             payload = resp.json()
-    except Exception:
+    except httpx.ConnectError as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Connection error fetching project inventory: {e}")
+        return "Project inventory is unavailable right now due to a connection error."
+    except httpx.TimeoutException as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Timeout fetching project inventory: {e}")
+        return "Project inventory is unavailable right now due to a timeout."
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Unexpected error fetching project inventory: {e}")
         return "Project inventory is unavailable right now."
 
     rows = payload.get("rows") if isinstance(payload, dict) else []

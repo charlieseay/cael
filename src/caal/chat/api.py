@@ -800,7 +800,10 @@ async def chat_voice(req: ChatRequest) -> Response:
 
     # Synthesize response text to audio
     try:
-        audio_bytes = await synthesize(chat_response.response)
+        # Embedded runtime must prioritize local Piper even if persisted settings
+        # still contain legacy providers from prior Docker-era sessions.
+        forced_provider = (os.getenv("TTS_PROVIDER") or "").strip().lower() or None
+        audio_bytes = await synthesize(chat_response.response, provider=forced_provider)
     except Exception as e:
         logger.error(f"TTS synthesis failed for voice endpoint: {e}")
         raise HTTPException(

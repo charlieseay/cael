@@ -73,8 +73,7 @@ def looks_like_time_request(text: str) -> bool:
 
 
 def current_time_summary() -> str:
-    timezone_id = os.getenv("TIMEZONE", "America/Los_Angeles")
-    timezone_display = os.getenv("TIMEZONE_DISPLAY", "Pacific Time")
+    timezone_id, timezone_display = _resolve_timezone()
     try:
         now = datetime.now(ZoneInfo(timezone_id))
     except Exception:
@@ -82,6 +81,35 @@ def current_time_summary() -> str:
     # Portable 12-hour formatting (avoids %-I platform differences).
     hour = now.hour % 12 or 12
     return f"It's {hour}:{now.minute:02d} {now.strftime('%p')} {timezone_display}."
+
+
+def _resolve_timezone() -> tuple[str, str]:
+    timezone_id = (os.getenv("TIMEZONE") or "").strip()
+    timezone_display = (os.getenv("TIMEZONE_DISPLAY") or "").strip()
+    if timezone_id and timezone_display:
+        return timezone_id, timezone_display
+
+    settings_path = os.getenv("CAAL_SETTINGS_PATH")
+    if not settings_path:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        settings_path = os.path.abspath(
+            os.path.join(script_dir, "..", "..", "..", "settings.json")
+        )
+    try:
+        import json
+        with open(settings_path, encoding="utf-8") as f:
+            settings = json.load(f)
+        tz_id = str(settings.get("timezone_id", "")).strip()
+        tz_name = str(settings.get("timezone_display", "")).strip()
+        if tz_id and tz_name:
+            return tz_id, tz_name
+    except Exception:
+        pass
+
+    local_tz = datetime.now().astimezone().tzinfo
+    tz_id = getattr(local_tz, "key", None) or "America/Chicago"
+    tz_name = "Central Time" if tz_id == "America/Chicago" else tz_id.replace("_", " ")
+    return tz_id, tz_name
 
 
 def looks_like_simple_greeting(text: str) -> bool:
@@ -151,17 +179,7 @@ async def try_projects_inventory_fallback(text: str) -> str | None:
             resp = await client.get(url)
             resp.raise_for_status()
             payload = resp.json()
-    except httpx.ConnectError as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Connection error fetching project inventory: {e}")
-        return "Project inventory is unavailable right now due to a connection error."
-    except httpx.TimeoutException as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Timeout fetching project inventory: {e}")
-        return "Project inventory is unavailable right now due to a timeout."
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Unexpected error fetching project inventory: {e}")
+    except Exception:
         return "Project inventory is unavailable right now."
 
     rows = payload.get("rows") if isinstance(payload, dict) else []

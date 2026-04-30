@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { AccessToken, type AccessTokenOptions, type VideoGrant } from 'livekit-server-sdk';
+import {
+  AccessToken,
+  AgentDispatchClient,
+  type AccessTokenOptions,
+  type VideoGrant,
+} from 'livekit-server-sdk';
 import { RoomConfiguration } from '@livekit/protocol';
 
 type ConnectionDetails = {
@@ -16,6 +21,10 @@ const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 // External URL for browser connection (set to 'auto' for dynamic detection)
 const LIVEKIT_PUBLIC_URL = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+const dispatchClient =
+  LIVEKIT_URL && API_KEY && API_SECRET
+    ? new AgentDispatchClient(LIVEKIT_URL, API_KEY, API_SECRET)
+    : null;
 
 // don't cache the results
 export const revalidate = 0;
@@ -45,7 +54,8 @@ export async function POST(req: Request) {
 
     // Parse agent configuration from request body
     const body = await req.json().catch(() => ({}));
-    const agentName: string = body?.room_config?.agents?.[0]?.agent_name;
+    const requestedAgentName: string | undefined = body?.room_config?.agents?.[0]?.agent_name;
+    const agentName = requestedAgentName?.trim() || 'caal';
     // extended_session: true → 4-hour token TTL (for Siri/wake-word triggered sessions)
     const extendedSession: boolean = body?.extended_session === true;
 
@@ -62,6 +72,7 @@ export async function POST(req: Request) {
       agentName,
       extendedSession,
     );
+    await ensureAgentDispatch(roomName, agentName);
 
     // Determine the WebSocket URL for the client.
     // If NEXT_PUBLIC_LIVEKIT_URL is configured, always honor it so
@@ -95,6 +106,19 @@ export async function POST(req: Request) {
       console.error(error);
       return new NextResponse(error.message, { status: 500 });
     }
+  }
+}
+
+async function ensureAgentDispatch(roomName: string, agentName: string): Promise<void> {
+  if (!dispatchClient) return;
+  try {
+    const existing = await dispatchClient.listDispatch(roomName);
+    const alreadyDispatched = existing.some((dispatch) => dispatch.agentName === agentName);
+    if (!alreadyDispatched) {
+      await dispatchClient.createDispatch(roomName, agentName);
+    }
+  } catch (error) {
+    console.error('[connection-details] failed to ensure agent dispatch', error);
   }
 }
 

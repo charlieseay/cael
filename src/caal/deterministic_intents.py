@@ -6,15 +6,22 @@ Avoids LLM/tool noise for simple operational questions (network, project list).
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from . import network_state
 
 
+def _normalize_intent_text(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
+    return " ".join(cleaned.split())
+
+
 def looks_like_network_status_request(text: str) -> bool:
-    q = (text or "").strip().lower()
+    q = _normalize_intent_text(text)
     if not q:
         return False
     triggers = [
@@ -40,9 +47,7 @@ def network_status_summary() -> str:
     state = network_state.get()
     seconds_ago = int(max(0, datetime.now().timestamp() - state.received_at))
     if state.connection == "unknown":
-        return (
-            "Connection status not available yet - the iOS client hasn't reported in."
-        )
+        return "Connection status isn't available in telemetry yet."
     text = f"You're on {state.connection}."
     if seconds_ago > 180:
         text += (
@@ -50,6 +55,75 @@ def network_status_summary() -> str:
             "so this may be stale."
         )
     return text
+
+
+def looks_like_time_request(text: str) -> bool:
+    q = _normalize_intent_text(text)
+    if not q:
+        return False
+    triggers = [
+        "what time is it",
+        "current time",
+        "time is it",
+        "what's the time",
+        "whats the time",
+        "tell me the time",
+    ]
+    return any(t in q for t in triggers)
+
+
+def current_time_summary() -> str:
+    timezone_id = os.getenv("TIMEZONE", "America/Los_Angeles")
+    timezone_display = os.getenv("TIMEZONE_DISPLAY", "Pacific Time")
+    try:
+        now = datetime.now(ZoneInfo(timezone_id))
+    except Exception:
+        now = datetime.now()
+    # Portable 12-hour formatting (avoids %-I platform differences).
+    hour = now.hour % 12 or 12
+    return f"It's {hour}:{now.minute:02d} {now.strftime('%p')} {timezone_display}."
+
+
+def looks_like_simple_greeting(text: str) -> bool:
+    q = _normalize_intent_text(text)
+    if not q:
+        return False
+    greetings = {
+        "hello",
+        "hello cael",
+        "hi",
+        "hi cael",
+        "hey",
+        "hey cael",
+    }
+    return q in greetings
+
+
+def simple_greeting_response() -> str:
+    return "Hey Charlie, I'm here."
+
+
+def looks_like_model_request(text: str) -> bool:
+    q = _normalize_intent_text(text)
+    if not q:
+        return False
+    triggers = [
+        "what model are you using",
+        "which model are you using",
+        "what llm are you using",
+        "what provider are you using",
+        "are you using gemini",
+        "are you using ollama",
+    ]
+    return any(t in q for t in triggers)
+
+
+def current_model_summary() -> str:
+    provider = (os.getenv("LLM_PROVIDER", "ollama") or "ollama").strip().lower()
+    ollama_model = (os.getenv("OLLAMA_MODEL", "gemma4") or "gemma4").strip()
+    if provider == "ollama":
+        return f"I'm using Ollama with {ollama_model} right now."
+    return f"I'm currently using {provider} as the LLM provider."
 
 
 def looks_like_project_list_request(text: str) -> bool:

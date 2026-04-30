@@ -68,9 +68,15 @@ from caal.integrations import (  # noqa: E402
 )
 from caal.integrations.mcp_loader import LazyMCPServer  # noqa: E402
 from caal.deterministic_intents import (  # noqa: E402
+    current_time_summary,
+    current_model_summary,
+    looks_like_model_request,
+    looks_like_simple_greeting,
     looks_like_network_status_request,
+    looks_like_time_request,
     looks_like_project_list_request,
     network_status_summary,
+    simple_greeting_response,
     try_projects_inventory_fallback,
 )
 from caal.llm import ToolDataCache, llm_node as run_llm_node  # noqa: E402
@@ -350,6 +356,15 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, Mac
     async def llm_node(self, chat_ctx, tools, model_settings):
         """Custom LLM node using provider-agnostic interface."""
         user_text = _last_user_utterance_text(chat_ctx)
+        if looks_like_simple_greeting(user_text):
+            yield strip_markdown_for_tts(simple_greeting_response())
+            return
+        if looks_like_time_request(user_text):
+            yield strip_markdown_for_tts(current_time_summary())
+            return
+        if looks_like_model_request(user_text):
+            yield strip_markdown_for_tts(current_model_summary())
+            return
         if looks_like_network_status_request(user_text):
             yield strip_markdown_for_tts(network_status_summary())
             return
@@ -1283,6 +1298,7 @@ if __name__ == "__main__":
     num_idle_env = os.getenv("CAAL_NUM_IDLE_PROCESSES", "").strip()
     worker_kwargs: dict[str, object] = {
         "entrypoint_fnc": entrypoint,
+        "agent_name": "caal",
         # Suppress memory warnings (models use ~1GB, this is expected)
         "job_memory_warn_mb": 0,
     }

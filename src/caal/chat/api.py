@@ -31,9 +31,15 @@ from pydantic import BaseModel
 from .. import CAALLLM
 from .. import settings as settings_module
 from ..deterministic_intents import (
+    current_time_summary,
+    current_model_summary,
+    looks_like_model_request,
+    looks_like_simple_greeting,
     looks_like_network_status_request,
+    looks_like_time_request,
     looks_like_project_list_request,
     network_status_summary,
+    simple_greeting_response,
     try_projects_inventory_fallback,
 )
 from ..context import ChatContext, ToolContext
@@ -429,6 +435,33 @@ async def chat(req: ChatRequest) -> ChatResponse:
         projects_fallback = await try_projects_inventory_fallback(req.text)
         return ChatResponse(
             response=projects_fallback or "Project inventory is unavailable right now.",
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
+    if looks_like_simple_greeting(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        return ChatResponse(
+            response=simple_greeting_response(),
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
+    if looks_like_time_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        return ChatResponse(
+            response=current_time_summary(),
+            tool_calls=[],
+            session_id=sid,
+            debug=None,
+        )
+
+    if looks_like_model_request(req.text):
+        sid = req.session_id or PERSISTENT_SESSION_ID
+        return ChatResponse(
+            response=current_model_summary(),
             tool_calls=[],
             session_id=sid,
             debug=None,

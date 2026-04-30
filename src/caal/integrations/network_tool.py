@@ -32,10 +32,10 @@ def build_network_response(state: NetworkState, now: float) -> dict:
             "is_expensive": False,
             "is_constrained": False,
             "voice_summary": (
-                "Connection status not available yet — "
-                "the iOS client hasn't reported in."
+                "Connection status isn't available in telemetry yet."
             ),
             "last_update_seconds_ago": seconds_ago,
+            "is_stale": seconds_ago > stale_threshold_seconds,
         }
 
     parts = [f"You're on {state.connection}"]

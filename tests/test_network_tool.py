@@ -31,7 +31,7 @@ def test_unknown_state_returns_not_reported_yet_message():
     assert out["connection_type"] == "unknown"
     assert out["is_expensive"] is False
     assert out["is_constrained"] is False
-    assert "iOS client hasn't reported in" in out["voice_summary"]
+    assert out["voice_summary"] == "Connection status isn't available in telemetry yet."
     assert out["last_update_seconds_ago"] == 5
 
 
@@ -90,7 +90,7 @@ def test_response_shape_is_stable_across_states():
     # The LLM contract depends on these exact keys being present in every path.
     expected_keys = {
         "connection_type", "is_expensive", "is_constrained",
-        "voice_summary", "last_update_seconds_ago",
+        "voice_summary", "last_update_seconds_ago", "is_stale",
     }
     for state in [NetworkState(), _state(connection="wifi"), _state(connection="cellular", is_expensive=True)]:
         out = build_network_response(state, now=state.received_at + 10)

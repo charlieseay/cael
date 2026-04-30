@@ -160,16 +160,16 @@ services:
         org.opencontainers.image.source: https://github.com/CoreWorxLab/caal
         org.opencontainers.image.description: CAAL Voice Assistant Frontend
       args:
-        - NEXT_PUBLIC_LIVEKIT_URL=wss://${HTTPS_DOMAIN:-${CAAL_HOST_IP}}:7443
+        - NEXT_PUBLIC_LIVEKIT_URL=ws://${CAAL_HOST_IP}:7880
         - NEXT_PUBLIC_PORCUPINE_ACCESS_KEY=${PORCUPINE_ACCESS_KEY:-}
     container_name: caal-frontend
     ports:
-      - "3000:3000"
+      - "3100:3000"
     environment:
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
-      - NEXT_PUBLIC_LIVEKIT_URL=wss://${HTTPS_DOMAIN:-${CAAL_HOST_IP}}:7443
+      - NEXT_PUBLIC_LIVEKIT_URL=ws://${CAAL_HOST_IP}:7880
       - WEBHOOK_URL=http://agent:8889
     networks:
       - caal-network

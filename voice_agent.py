@@ -44,7 +44,16 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_script_dir, ".env"))
 
 from livekit import agents, rtc  # noqa: E402
-from livekit.agents import Agent, AgentSession, mcp  # noqa: E402
+from livekit.agents import Agent, AgentSession  # noqa: E402
+
+try:
+    from livekit.agents import mcp  # noqa: E402
+except Exception:  # optional extra; embedded bundle may omit MCP
+
+    class _MCPNamespace:
+        MCPServerHTTP = object
+
+    mcp = _MCPNamespace()
 from livekit.plugins import groq as groq_plugin  # noqa: E402
 from livekit.plugins import openai, silero  # noqa: E402
 
@@ -620,8 +629,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         else:
             tts_provider = "piper"
 
-    # For English sessions, prefer Kokoro when healthy unless explicitly forced to Piper.
+    # Only auto-route to Kokoro when the user requested automatic provider selection.
+    # If runtime settings explicitly request Piper, respect that choice.
     if (
+        requested_tts_provider == "auto"
+        and
         tts_provider == "piper"
         and language == "en"
         and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
@@ -1308,6 +1320,8 @@ if __name__ == "__main__":
             logger.info("Worker num_idle_processes=%s", worker_kwargs["num_idle_processes"])
         except ValueError:
             logger.warning("Invalid CAAL_NUM_IDLE_PROCESSES=%r, ignoring", num_idle_env)
+
+    worker_kwargs["port"] = int(os.getenv("CAAL_WORKER_PORT", "8892"))
 
     agents.cli.run_app(
         agents.WorkerOptions(**worker_kwargs)

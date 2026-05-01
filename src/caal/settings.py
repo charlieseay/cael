@@ -80,7 +80,7 @@ DEFAULT_SETTINGS = {
     "temperature": 0.15,
     # Ollama settings
     "ollama_host": "http://localhost:11434",
-    "ollama_model": "ministral-3:8b",
+    "ollama_model": "mistral:7b",
     "num_ctx": 8192,
     # Groq settings
     "groq_api_key": "",  # API key from console.groq.com

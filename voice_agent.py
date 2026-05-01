@@ -17,7 +17,7 @@ Environment Variables:
     KOKORO_URL          - Kokoro TTS service URL (default: "http://kokoro:8880")
     WHISPER_MODEL       - Whisper model for STT (default: "Systran/faster-whisper-small")
     TTS_VOICE           - Kokoro voice name (default: "af_heart")
-    OLLAMA_MODEL        - Ollama model name (default: "ministral-3:8b")
+    OLLAMA_MODEL        - Ollama model name (default: "mistral:7b")
     OLLAMA_THINK        - Enable thinking mode (default: "false")
     TIMEZONE            - Timezone for date/time (default: "Pacific Time")
 """
@@ -195,7 +195,7 @@ def get_runtime_settings() -> dict:
         ),
         "ollama_model": (
             user_settings.get("ollama_model")
-            or os.getenv("OLLAMA_MODEL", "ministral-3:8b")
+            or os.getenv("OLLAMA_MODEL", "mistral:7b")
         ),
         "num_ctx": settings.get("num_ctx", int(os.getenv("OLLAMA_NUM_CTX", "8192"))),
         "think": OLLAMA_THINK,  # Only applies to Ollama
@@ -1170,7 +1170,7 @@ def preload_models():
 
     def _preload_llm():
         ollama_host = settings.get("ollama_host") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        ollama_model = settings.get("ollama_model") or os.getenv("OLLAMA_MODEL", "ministral-3:8b")
+        ollama_model = settings.get("ollama_model") or os.getenv("OLLAMA_MODEL", "mistral:7b")
         ollama_num_ctx = settings.get("num_ctx", int(os.getenv("OLLAMA_NUM_CTX", "8192")))
         try:
             logger.info(f"  Loading LLM: {ollama_model} (num_ctx={ollama_num_ctx})")

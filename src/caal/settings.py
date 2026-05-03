@@ -131,6 +131,11 @@ DEFAULT_SETTINGS = {
     # Google AI API settings (API key required)
     "google_api_key": "",
     "google_model": "gemini-2.0-flash",
+    # NVIDIA NIM / OpenAI-compatible escalation (complex tier when enabled + key set)
+    "nvidia_enabled": False,
+    "nvidia_base_url": "https://integrate.api.nvidia.com/v1",
+    "nvidia_api_key": "",
+    "nvidia_model": "meta/llama-3.1-70b-instruct",
     # Model router — always active, routes by complexity + observed latency.
     # Simple commands go local-small; multi-step go local-medium; reasoning goes cloud.
     # If a local tier is slow or Ollama is down, the router escalates automatically.
@@ -168,6 +173,7 @@ SENSITIVE_KEYS: set[str] = {
     "hass_token",
     "n8n_token",
     "n8n_api_key",
+    "nvidia_api_key",
 }
 
 # Cached settings (reloaded on save)

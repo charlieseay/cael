@@ -77,6 +77,9 @@ from caal.integrations import (  # noqa: E402
 )
 from caal.integrations.mcp_loader import LazyMCPServer  # noqa: E402
 from caal.deterministic_intents import (  # noqa: E402
+    looks_like_brief_request,
+    looks_like_vault_shortcut,
+    vault_root_for_shortcuts,
     current_time_summary,
     current_model_summary,
     looks_like_model_request,
@@ -382,6 +385,20 @@ class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, Mac
             if reply:
                 yield strip_markdown_for_tts(reply)
                 return
+        shortcut_path = looks_like_vault_shortcut(user_text)
+        if shortcut_path:
+            try:
+                content = (vault_root_for_shortcuts() / shortcut_path).read_text(encoding="utf-8")[
+                    :4000
+                ]
+                yield strip_markdown_for_tts(content)
+            except OSError:
+                yield strip_markdown_for_tts("I could not read that note right now.")
+            return
+        if looks_like_brief_request(user_text):
+            brief = await self.get_helmsman_brief("all")
+            yield strip_markdown_for_tts(brief)
+            return
         async for chunk in run_llm_node(
             self,
             chat_ctx,

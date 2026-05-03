@@ -582,10 +582,11 @@ async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
         "openrouter_api_key",
         "anthropic_api_key",
         "google_api_key",
+        "nvidia_api_key",
     }
 
     # Validate URL fields
-    url_fields = ["openai_base_url", "ollama_host", "hass_host", "n8n_url"]
+    url_fields = ["openai_base_url", "ollama_host", "hass_host", "n8n_url", "nvidia_base_url"]
     for field in url_fields:
         if field in req.settings and req.settings[field]:
             is_valid, error = validate_url(req.settings[field])

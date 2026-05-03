@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -256,6 +257,10 @@ class RouterConfig:
     openrouter_api_key: str | None = None
     anthropic_api_key: str | None = None
     google_api_key: str | None = None
+    nvidia_enabled: bool = False
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_api_key: str | None = None
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -370,6 +375,19 @@ class ModelRouter:
         elif tier == MEDIUM:
             name, model = self._config.medium_provider, self._config.medium_model
         else:
+            if self._config.nvidia_enabled and (self._config.nvidia_api_key or "").strip():
+                base = (self._config.nvidia_base_url or "").strip().rstrip("/")
+                if not base.endswith("/v1"):
+                    base = f"{base}/v1"
+                model = (self._config.nvidia_model or "meta/llama-3.1-70b-instruct").strip()
+                kwargs_nv: dict[str, Any] = {
+                    "model": model,
+                    "temperature": self._config.temperature,
+                    "base_url": base,
+                    "api_key": self._config.nvidia_api_key,
+                }
+                logger.debug("ModelRouter: complex tier → NVIDIA (openai_compatible)")
+                return create_provider("openai_compatible", **kwargs_nv)
             name, model = self._config.complex_provider, self._config.complex_model
 
         kwargs: dict[str, Any] = {"model": model, "temperature": self._config.temperature}
@@ -457,6 +475,25 @@ def create_router_from_settings(settings: dict[str, Any]) -> ModelRouter:
     if user_model and user_model not in medium_prefs:
         medium_prefs.insert(0, user_model)
 
+    nvidia_api = str(
+        settings.get("nvidia_api_key") or os.getenv("NVIDIA_API_KEY") or ""
+    ).strip()
+    nvidia_on = bool(settings.get("nvidia_enabled")) or os.getenv(
+        "NVIDIA_ENABLED", ""
+    ).lower() in ("1", "true", "yes")
+    if not nvidia_api:
+        nvidia_on = False
+    nvidia_base = (
+        settings.get("nvidia_base_url")
+        or os.getenv("NVIDIA_BASE_URL")
+        or "https://integrate.api.nvidia.com/v1"
+    )
+    nvidia_base = str(nvidia_base).strip()
+    nvidia_model = (
+        settings.get("nvidia_model") or os.getenv("NVIDIA_MODEL") or "meta/llama-3.1-70b-instruct"
+    )
+    nvidia_model = str(nvidia_model).strip()
+
     config = RouterConfig(
         simple_provider=settings.get("router_simple_provider", "ollama"),
         simple_model=settings.get("router_simple_model", "qwen2.5:3b"),
@@ -475,5 +512,9 @@ def create_router_from_settings(settings: dict[str, Any]) -> ModelRouter:
         openrouter_api_key=settings.get("openrouter_api_key"),
         anthropic_api_key=settings.get("anthropic_api_key"),
         google_api_key=settings.get("google_api_key"),
+        nvidia_enabled=nvidia_on,
+        nvidia_base_url=nvidia_base,
+        nvidia_api_key=nvidia_api or None,
+        nvidia_model=nvidia_model,
     )
     return ModelRouter(config)

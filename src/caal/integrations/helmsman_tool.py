@@ -58,8 +58,21 @@ DISPATCH_URL = os.getenv(
 )
 DISPATCH_SECRET = os.getenv("DISPATCH_SECRET", "")
 HELMSMAN_DB_URL = os.getenv("HELMSMAN_DB_URL", "http://localhost:5682")
-VAULT_PATH = Path(os.getenv("VAULT_PATH", "/vault"))
-IDEAS_DIR = VAULT_PATH / "Ideas"
+
+
+def _vault_note_root() -> Path:
+    """Obsidian vault root for read/write tools (VAULT_PATH in Docker, dev default on Mac)."""
+    env = os.getenv("VAULT_PATH", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path(
+        "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+    ).resolve()
+
+
+def _ideas_dir() -> Path:
+    return _vault_note_root() / "Ideas"
+
 
 _HTTP_TIMEOUT = 10.0
 
@@ -592,17 +605,18 @@ class HelmsmanTools:
         """
         logger.info(f"capture_idea: {title!r}")
         try:
-            IDEAS_DIR.mkdir(parents=True, exist_ok=True)
+            ideas = _ideas_dir()
+            ideas.mkdir(parents=True, exist_ok=True)
             today = datetime.now().strftime("%Y-%m-%d")
             slug = _slugify(title)
-            path = IDEAS_DIR / f"{today}-{slug}.md"
+            path = ideas / f"{today}-{slug}.md"
 
             # Avoid overwriting if same slug lands twice in a day
             if path.exists():
                 n = 2
-                while (IDEAS_DIR / f"{today}-{slug}-{n}.md").exists():
+                while (ideas / f"{today}-{slug}-{n}.md").exists():
                     n += 1
-                path = IDEAS_DIR / f"{today}-{slug}-{n}.md"
+                path = ideas / f"{today}-{slug}-{n}.md"
 
             tag_list = tags or []
             if "idea" not in tag_list:
@@ -759,9 +773,7 @@ class HelmsmanTools:
         if ".." in vault_relative_path or vault_relative_path.startswith("/"):
             return "Path safety check failed: no absolute paths or '..' allowed."
 
-        vault_root = Path(
-            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
-        )
+        vault_root = _vault_note_root()
         full_path = vault_root / vault_relative_path
 
         # Ensure the final path is within vault_root (prevent symlink escapes)
@@ -777,6 +789,183 @@ class HelmsmanTools:
         except Exception as e:
             logger.warning(f"edit_vault_note failed: {e}")
             return f"Could not write to vault: {e}"
+
+    @function_tool
+    async def read_vault_note(self, vault_relative_path: str) -> str:
+        """Read the contents of a vault note by path.
+
+        Use this to fetch a specific Obsidian vault file when the user asks about
+        a known document (Hotsheet, AI Handoff, project notes, etc.).
+
+        Args:
+            vault_relative_path: Path relative to vault root, e.g. "Projects/Hotsheet.md"
+        """
+        if ".." in vault_relative_path or vault_relative_path.startswith("/"):
+            return "Path safety check failed: no absolute paths or '..' allowed."
+
+        vault_root = _vault_note_root()
+        target = (vault_root / vault_relative_path).resolve()
+        try:
+            target.relative_to(vault_root)
+        except ValueError:
+            return "Error: path escapes vault root"
+
+        if not target.exists():
+            return f"Note not found: {vault_relative_path}"
+        if not target.is_file():
+            return f"Not a file: {vault_relative_path}"
+
+        try:
+            content = target.read_text(encoding="utf-8")
+            if len(content) > 8000:
+                content = content[:8000] + "\n\n[...truncated — ask for a specific section]"
+            return content
+        except Exception as e:
+            return f"Error reading note: {e}"
+
+    @function_tool
+    async def list_vault_folder(self, vault_relative_path: str = "") -> str:
+        """List files and subfolders in a vault directory.
+
+        Args:
+            vault_relative_path: Path relative to vault root. Empty string = vault root.
+        """
+        if vault_relative_path and (
+            ".." in vault_relative_path or vault_relative_path.startswith("/")
+        ):
+            return "Path safety check failed: no absolute paths or '..' allowed."
+
+        vault_root = _vault_note_root()
+        target = (
+            (vault_root / vault_relative_path).resolve()
+            if vault_relative_path
+            else vault_root
+        )
+
+        try:
+            target.relative_to(vault_root)
+        except ValueError:
+            return "Error: path escapes vault root"
+
+        if not target.is_dir():
+            return f"Not a directory: {vault_relative_path}"
+
+        entries: list[str] = []
+        for item in sorted(target.iterdir()):
+            if item.name.startswith("."):
+                continue
+            tag = "dir" if item.is_dir() else "file"
+            entries.append(f"[{tag}] {item.name}")
+
+        return "\n".join(entries) if entries else "Empty directory"
+
+    @function_tool
+    async def check_infrastructure(self, service_filter: str = "") -> str:
+        """Check lab infrastructure status — running containers, service health.
+
+        Args:
+            service_filter: Optional service name filter (e.g. "n8n", "bridge", "sonique")
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return "Docker is not responding. Check if Docker Desktop is running."
+
+            lines = result.stdout.strip().split("\n")
+            if service_filter:
+                lines = [lines[0]] + [ln for ln in lines[1:] if service_filter.lower() in ln.lower()]
+
+            if len(lines) <= 1:
+                return f"No containers found matching '{service_filter}'."
+
+            container_count = len(lines) - 1
+            header = f"{container_count} containers running"
+            if service_filter:
+                header += f" matching '{service_filter}'"
+
+            return f"{header}:\n" + "\n".join(lines[1:])
+
+        except subprocess.TimeoutExpired:
+            return "Docker check timed out."
+        except FileNotFoundError:
+            return "Docker CLI not found. Cannot check infrastructure."
+
+    @function_tool
+    async def get_helmsman_brief(self, scope: str = "all") -> str:
+        """Get a voice-friendly summary of pending work and lab status.
+
+        Args:
+            scope: "tasks" | "tickets" | "hotsheet" | "all"
+        """
+        parts: list[str] = []
+
+        if scope in ("tasks", "all"):
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.get(
+                        f"{HELMSMAN_DB_URL.rstrip('/')}/tasks?status=pending",
+                        timeout=5.0,
+                    )
+                if r.status_code == 200:
+                    tasks = r.json()
+                    if isinstance(tasks, list) and tasks:
+                        by_owner: dict[str, list[str]] = {}
+                        for t in tasks:
+                            if not isinstance(t, dict):
+                                continue
+                            owner = str(t.get("owner", "?"))
+                            task_title = str(t.get("task", ""))
+                            by_owner.setdefault(owner, []).append(task_title)
+                        lines_bt = [f"{len(tasks)} pending tasks:"]
+                        for owner, items in sorted(by_owner.items()):
+                            lines_bt.append(
+                                f"  {owner}: {', '.join(i[:40] for i in items[:3])}"
+                            )
+                            if len(items) > 3:
+                                lines_bt.append(f"    ...and {len(items) - 3} more")
+                        parts.append("\n".join(lines_bt))
+                    else:
+                        parts.append("No pending tasks.")
+            except Exception as e:
+                parts.append(f"Tasks: unavailable ({e})")
+
+        if scope in ("tickets", "all"):
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.get(
+                        f"{HELMSMAN_DB_URL.rstrip('/')}/tickets?status=open",
+                        timeout=5.0,
+                    )
+                if r.status_code == 200:
+                    tickets = r.json()
+                    if isinstance(tickets, list):
+                        bugs = [t for t in tickets if isinstance(t, dict) and t.get("type") == "bug"]
+                        feats = [t for t in tickets if isinstance(t, dict) and t.get("type") == "feature"]
+                        if bugs or feats:
+                            parts.append(f"{len(bugs)} open bugs, {len(feats)} open features.")
+                        else:
+                            parts.append("No open tickets.")
+            except Exception as e:
+                parts.append(f"Tickets: unavailable ({e})")
+
+        if scope in ("hotsheet", "all"):
+            hotsheet_path = _vault_note_root() / "Projects/Hotsheet.md"
+            if hotsheet_path.exists():
+                content = hotsheet_path.read_text(encoding="utf-8")
+                table_lines = [
+                    ln
+                    for ln in content.split("\n")
+                    if ln.startswith("| ") and "---" not in ln
+                ]
+                if table_lines:
+                    parts.append("Hotsheet:\n" + "\n".join(table_lines[:6]))
+
+        return "\n\n".join(parts) if parts else "Unable to fetch lab status."
 
     @function_tool
     async def append_to_vault_note(self, vault_relative_path: str, content: str) -> str:
@@ -795,9 +984,7 @@ class HelmsmanTools:
         if ".." in vault_relative_path or vault_relative_path.startswith("/"):
             return "Path safety check failed: no absolute paths or '..' allowed."
 
-        vault_root = Path(
-            "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
-        )
+        vault_root = _vault_note_root()
         full_path = vault_root / vault_relative_path
 
         # Ensure the final path is within vault_root

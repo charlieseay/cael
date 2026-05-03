@@ -8,11 +8,61 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from . import network_state
+
+KNOWN_VAULT_SHORTCUTS: dict[str, str] = {
+    "hotsheet": "Projects/Hotsheet.md",
+    "hot sheet": "Projects/Hotsheet.md",
+    "ai handoff": "Projects/AI Handoff.md",
+    "handoff": "Projects/AI Handoff.md",
+    "work queue": "Projects/Work Queue.md",
+}
+
+_BRIEF_TRIGGERS: frozenset[str] = frozenset(
+    {
+        "what's on my plate",
+        "whats on my plate",
+        "what's pending",
+        "whats pending",
+        "project update",
+        "status update",
+        "what should i work on",
+        "what's next",
+        "whats next",
+        "give me a brief",
+        "helmsman brief",
+        "what are we working on",
+    }
+)
+
+
+def vault_root_for_shortcuts() -> Path:
+    raw = (os.getenv("VAULT_PATH") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path(
+        "/Users/charlieseay/Library/Mobile Documents/iCloud~md~obsidian/Documents/SeaynicNet"
+    ).resolve()
+
+
+def looks_like_vault_shortcut(text: str) -> Optional[str]:
+    """Returns vault path if text matches a known shortcut, else None."""
+    lower = text.lower().strip("?. ")
+    for keyword, path in KNOWN_VAULT_SHORTCUTS.items():
+        if keyword in lower:
+            return path
+    return None
+
+
+def looks_like_brief_request(text: str) -> bool:
+    lower = text.lower().strip("?. ")
+    return any(t in lower for t in _BRIEF_TRIGGERS)
 
 
 def _normalize_intent_text(text: str) -> str:

@@ -17,6 +17,12 @@
       "url": "http://host.docker.internal:3700/vault/mcp",
       "transport": "streamable_http",
       "timeout": 10.0
+    },
+    {
+      "name": "homelab",
+      "url": "http://host.docker.internal:3700/homelab/mcp",
+      "transport": "streamable_http",
+      "timeout": 10.0
     }
   ]
 }

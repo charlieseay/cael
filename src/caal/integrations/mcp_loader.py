@@ -25,6 +25,8 @@ CONNECTION_TEST_TIMEOUT = 3.0
 
 logger = logging.getLogger(__name__)
 
+_DOCKER_INTERNAL_HOST = "host.docker.internal"
+
 
 @dataclass
 class MCPServerConfig:
@@ -34,6 +36,38 @@ class MCPServerConfig:
     auth_token: str | None = None
     transport: Literal["sse", "streamable_http"] | None = None
     timeout: float = 10.0
+
+
+def _mcp_proxy_host_from_env_or_settings(settings: dict[str, Any]) -> str:
+    """Host to substitute for host.docker.internal in MCP URLs (embedded sidecar = localhost)."""
+    h = (os.environ.get("MCP_PROXY_HOST") or "").strip()
+    if h:
+        return h
+    return (settings.get("mcp_proxy_host") or "").strip()
+
+
+def _rewrite_mcp_urls_for_proxy_host(
+    servers: list[MCPServerConfig], proxy_host: str
+) -> list[MCPServerConfig]:
+    if not proxy_host:
+        return servers
+    out: list[MCPServerConfig] = []
+    for s in servers:
+        if _DOCKER_INTERNAL_HOST not in s.url:
+            out.append(s)
+            continue
+        new_url = s.url.replace(_DOCKER_INTERNAL_HOST, proxy_host)
+        logger.info("MCP URL rewrite (%s): %s -> %s", s.name, s.url, new_url)
+        out.append(
+            MCPServerConfig(
+                name=s.name,
+                url=new_url,
+                auth_token=s.auth_token,
+                transport=s.transport,
+                timeout=s.timeout,
+            )
+        )
+    return out
 
 
 def load_mcp_config(settings: dict[str, Any] | None = None) -> list[MCPServerConfig]:
@@ -158,8 +192,10 @@ def load_mcp_config(settings: dict[str, Any] | None = None) -> list[MCPServerCon
 
     if not servers:
         logger.warning("No MCP servers configured - no MCP tools will be available")
+        return servers
 
-    return servers
+    proxy_host = _mcp_proxy_host_from_env_or_settings(settings)
+    return _rewrite_mcp_urls_for_proxy_host(servers, proxy_host)
 
 
 @dataclass

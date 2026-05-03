@@ -21,5 +21,6 @@
   "wake_word_enabled": false,
   "wake_word_model": "models/hey_cal.onnx",
   "wake_word_threshold": 0.5,
-  "wake_word_timeout": 3.0
+  "wake_word_timeout": 3.0,
+  "mcp_proxy_host": ""
 }

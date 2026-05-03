@@ -52,9 +52,12 @@ from .. import mac_actions
 
 logger = logging.getLogger(__name__)
 
-DISPATCH_URL = os.getenv("DISPATCH_URL", "http://192.168.0.221:5680/webhook/task-dispatch")
+DISPATCH_URL = os.getenv(
+    "CAAL_DISPATCH_URL",
+    os.getenv("DISPATCH_URL", "http://localhost:5680/webhook/task-dispatch"),
+)
 DISPATCH_SECRET = os.getenv("DISPATCH_SECRET", "")
-HELMSMAN_DB_URL = os.getenv("HELMSMAN_DB_URL", "http://192.168.0.221:5682")
+HELMSMAN_DB_URL = os.getenv("HELMSMAN_DB_URL", "http://localhost:5682")
 VAULT_PATH = Path(os.getenv("VAULT_PATH", "/vault"))
 IDEAS_DIR = VAULT_PATH / "Ideas"
 

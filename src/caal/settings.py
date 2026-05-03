@@ -94,6 +94,8 @@ DEFAULT_SETTINGS = {
     "n8n_url": "",
     "n8n_token": "",  # MCP token for tool discovery
     "n8n_api_key": "",  # API key for workflow creation (Tool Registry)
+    # When set (or MCP_PROXY_HOST env), host.docker.internal in MCP URLs is rewritten for embedded sidecar.
+    "mcp_proxy_host": "",
     # Shared settings
     "max_turns": 20,
     "tool_cache_size": 3,

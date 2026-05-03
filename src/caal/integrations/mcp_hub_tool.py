@@ -30,7 +30,7 @@ from livekit.agents import function_tool
 
 logger = logging.getLogger(__name__)
 
-MCP_PROXY_URL = os.getenv("MCP_PROXY_URL", "http://host.docker.internal:3700")
+MCP_PROXY_URL = os.getenv("MCP_PROXY_URL", "http://localhost:3700")
 _DISCOVERY_TIMEOUT = 6.0
 _CALL_TIMEOUT = 30.0
 _CACHE_TTL = 300.0  # 5 minutes

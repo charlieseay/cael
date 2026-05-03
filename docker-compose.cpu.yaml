@@ -78,6 +78,7 @@ services:
     environment:
       - LIVEKIT_URL=ws://livekit:7880
       - SPEACHES_URL=http://speaches:8000
+      - MCP_PROXY_URL=http://host.docker.internal:3700
       - CAAL_MEMORY_DIR=/app/data
     volumes:
       - caal-memory:/app/data

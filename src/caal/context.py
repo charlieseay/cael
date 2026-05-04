@@ -29,6 +29,7 @@ from .integrations import (
     ROUTE_TASK_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
+    create_hass_rest_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
     execute_explain_route_decision,
@@ -183,6 +184,27 @@ class ToolContext:
                     create_hass_tools(hass_server, tool_prefix=prefix)
                 )
                 logger.info("HASS tools ready: hass")
+            else:
+                # Fallback: Direct REST integration for embedded mode (no MCP proxy)
+                import os
+                ha_url = os.getenv("HA_URL") or os.getenv("HASS_URL", "")
+                ha_token = os.getenv("HA_TOKEN") or os.getenv("HASS_TOKEN", "")
+
+                # Also check settings.json (for SoniqueBar embedded sidecar)
+                from . import settings as settings_module
+                if not ha_url:
+                    ha_url = settings_module.load_settings().get("ha_url", "")
+                if not ha_token:
+                    ha_token = settings_module.load_settings().get("ha_token", "")
+
+                if ha_url and ha_token:
+                    try:
+                        self._hass_tool_definitions, self._hass_tool_callables = (
+                            create_hass_rest_tools(ha_url, ha_token)
+                        )
+                        logger.info(f"HASS tools ready (REST): hass at {ha_url}")
+                    except Exception as e:
+                        logger.warning(f"HA REST tools failed: {e}")
 
             # Clear tool cache so _discover_tools rebuilds with new MCP tools
             self._llm_tools_cache = None

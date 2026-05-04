@@ -47,37 +47,12 @@ async def synthesize(
     kokoro_voice = voice or cfg.get("tts_voice_kokoro", "bm_george")
     piper_voice = cfg.get("tts_voice_piper", "speaches-ai/piper-en_US-ryan-high")
 
-    if tts_provider == "auto":
-        # Embedded mode should prefer local Piper.
-        if os.getenv("PIPER_URL"):
-            tts_provider = "piper"
-        else:
-            tts_provider = "kokoro"
+    # Embedded sidecar: Piper only (no remote fallback)
+    if tts_provider == "auto" or tts_provider == "piper":
+        tts_provider = "piper"
 
-    if tts_provider == "kokoro":
-        try:
-            return await _kokoro(text, voice=kokoro_voice)
-        except Exception as e:
-            logger.warning(f"Kokoro TTS failed, falling back to Speaches: {e}")
-            return await _speaches(text, voice=piper_voice)
     if tts_provider == "piper":
-        try:
-            return await _piper(text, voice=piper_voice)
-        except Exception as e:
-            logger.warning(f"Piper TTS failed, trying Kokoro: {e}")
-            return await _kokoro(text, voice=kokoro_voice)
-    if tts_provider == "speaches":
-        try:
-            return await _speaches(text, voice=piper_voice)
-        except Exception as e:
-            logger.warning(f"Speaches TTS failed, trying Piper: {e}")
-            return await _piper(text, voice=piper_voice)
-    else:
-        try:
-            return await _speaches(text, voice=piper_voice)
-        except Exception as e:
-            logger.warning(f"Speaches TTS failed, trying Kokoro: {e}")
-            return await _kokoro(text, voice=kokoro_voice)
+        return await _piper(text, voice=piper_voice)
 
 
 async def _kokoro(text: str, *, voice: str) -> bytes:

@@ -137,12 +137,12 @@ DEFAULT_SETTINGS = {
     "nvidia_api_key": "",
     "nvidia_model": "meta/llama-3.1-70b-instruct",
     # Model router — always active, routes by complexity + observed latency.
-    # Simple commands go local-small; multi-step go local-medium; reasoning goes cloud.
-    # If a local tier is slow or Ollama is down, the router escalates automatically.
+    # Tier 0 (Simple): local Ollama → Tier 1 (Medium): NVIDIA NIM → Tier 2 (Complex): Claude CLI
+    # On capacity error, router escalates to next tier automatically.
     "router_simple_provider": "ollama",
-    "router_simple_model": "qwen3:4b",
-    "router_medium_provider": "ollama",
-    "router_medium_model": "qwen3:8b",
+    "router_simple_model": "qwen2.5:3b",
+    "router_medium_provider": "openai_compatible",
+    "router_medium_model": "meta/llama-3.1-70b-instruct",
     "router_complex_provider": "claude_cli",
     "router_complex_model": "claude-haiku-4-5",
     # Quarterdeck smart router endpoint

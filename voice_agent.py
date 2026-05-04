@@ -681,7 +681,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     if tts_provider == "piper":
         piper_voice = runtime["tts_voice_piper"]
         tts_instance = SyncOpenAITTS(
-            base_url=f"{PIPER_URL}/v1",
+            base_url=PIPER_URL.rstrip("/"),
             model=piper_voice,
             voice=piper_voice,  # caal-tts parses `voice` first; must be a real Piper voice name
             speed=TTS_SPEED,
@@ -691,7 +691,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess
         kokoro_model = "kokoro"
         tts_instance = SyncOpenAITTS(
-            base_url=f"{KOKORO_URL}/v1",
+            base_url=KOKORO_URL.rstrip("/"),
             model=kokoro_model,
             voice=runtime["tts_voice_kokoro"],
             speed=TTS_SPEED,
@@ -1187,27 +1187,31 @@ def preload_models():
 
     def _preload_llm():
         ollama_host = settings.get("ollama_host") or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        ollama_model = settings.get("ollama_model") or os.getenv("OLLAMA_MODEL", "mistral:7b")
+        # Preload the router models (simple/medium tiers), not the legacy ollama_model setting
+        simple_model = settings.get("router_simple_model") or os.getenv("ROUTER_SIMPLE_MODEL", "qwen2.5:3b")
+        medium_model = settings.get("router_medium_model") or os.getenv("ROUTER_MEDIUM_MODEL", "gemma4:latest")
+        models_to_warm = list(dict.fromkeys([simple_model, medium_model]))  # dedup, preserve order
         ollama_num_ctx = settings.get("num_ctx", int(os.getenv("OLLAMA_NUM_CTX", "8192")))
-        try:
-            logger.info(f"  Loading LLM: {ollama_model} (num_ctx={ollama_num_ctx})")
-            response = requests.post(
-                f"{ollama_host}/api/generate",
-                json={
-                    "model": ollama_model,
-                    "prompt": "hi",
-                    "stream": False,
-                    "keep_alive": int(os.getenv("OLLAMA_KEEP_ALIVE", "-1")),
-                    "options": {"num_ctx": ollama_num_ctx}
-                },
-                timeout=180
-            )
-            if response.status_code == 200:
-                logger.info("  LLM ready")
-            else:
-                logger.warning(f"  LLM warmup returned {response.status_code}")
-        except Exception as e:
-            logger.warning(f"  Failed to preload LLM: {e}")
+        for model in models_to_warm:
+            try:
+                logger.info(f"  Loading LLM: {model} (num_ctx={ollama_num_ctx})")
+                response = requests.post(
+                    f"{ollama_host}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": "hi",
+                        "stream": False,
+                        "keep_alive": int(os.getenv("OLLAMA_KEEP_ALIVE", "-1")),
+                        "options": {"num_ctx": ollama_num_ctx}
+                    },
+                    timeout=180
+                )
+                if response.status_code == 200:
+                    logger.info(f"  {model} ready")
+                else:
+                    logger.warning(f"  {model} warmup returned {response.status_code}")
+            except Exception as e:
+                logger.warning(f"  Failed to preload {model}: {e}")
 
     def _preload_tts():
         language = settings.get("language", "en")

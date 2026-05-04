@@ -37,9 +37,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
+from datetime import timedelta
 from typing import Any
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
@@ -54,6 +57,50 @@ from .routing.policy import policy_from_settings
 from .settings import validate_url
 
 logger = logging.getLogger(__name__)
+
+
+def _get_livekit_keys_from_yaml() -> tuple[str, str] | None:
+    """Read LIVEKIT API key and secret from livekit.yaml config file.
+
+    Searches in common locations:
+    - LIVEKIT_CONFIG environment variable
+    - ~/Library/Application Support/SoniqueBar/sidecar/config/livekit.yaml
+    - /Volumes/data/containers/livekit/config/livekit.yaml
+
+    Returns:
+        Tuple of (api_key, api_secret) if found, None otherwise
+    """
+    config_paths = [
+        os.getenv("LIVEKIT_CONFIG"),
+        os.path.expanduser("~/Library/Application Support/SoniqueBar/sidecar/config/livekit.yaml"),
+        "/Volumes/data/containers/livekit/config/livekit.yaml",
+    ]
+
+    logger.debug(f"Searching for livekit.yaml in: {config_paths}")
+
+    for path in config_paths:
+        if not path:
+            logger.debug(f"Skipping empty path")
+            continue
+        if not os.path.isfile(path):
+            logger.debug(f"File not found: {path}")
+            continue
+        try:
+            logger.info(f"Reading livekit config from: {path}")
+            with open(path) as f:
+                config = yaml.safe_load(f)
+            keys = config.get("keys", {})
+            if isinstance(keys, dict) and keys:
+                # keys is {api_key: api_secret, ...}
+                api_key, api_secret = next(iter(keys.items()))
+                logger.info(f"Loaded LiveKit keys from {path}: key={api_key[:8]}..., secret={api_secret[:8]}...")
+                return api_key, api_secret
+        except Exception as e:
+            logger.error(f"Error reading {path}: {type(e).__name__}: {e}")
+            continue
+
+    logger.warning("No LiveKit keys found from yaml files, will use fallback")
+    return None
 
 app = FastAPI(
     title="CAAL Webhook API",
@@ -73,10 +120,19 @@ app.add_middleware(
 
 def get_livekit_api() -> api.LiveKitAPI:
     """Get a LiveKit API client for sending data messages to agents."""
+    # Always try to read from livekit.yaml first (source of truth)
+    yaml_keys = _get_livekit_keys_from_yaml()
+    if yaml_keys:
+        api_key, api_secret = yaml_keys
+    else:
+        # Fallback to environment variables if yaml not available
+        api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+        api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+
     return api.LiveKitAPI(
         url=os.getenv("LIVEKIT_URL", "http://localhost:7880"),
-        api_key=os.getenv("LIVEKIT_API_KEY", "devkey"),
-        api_secret=os.getenv("LIVEKIT_API_SECRET", "secret"),
+        api_key=api_key,
+        api_secret=api_secret,
     )
 
 
@@ -357,7 +413,7 @@ class NetworkStateRequest(BaseModel):
     timestamp: str  # ISO 8601
 
 
-@app.post("/api/network-state", status_code=204)
+@app.post("/api/network-state")
 async def receive_network_state(req: NetworkStateRequest) -> None:
     """Receive network connectivity state from the iOS client.
 
@@ -399,25 +455,41 @@ async def get_connection_details(req: ConnectionDetailsRequest) -> ConnectionDet
     Returns:
         ConnectionDetailsResponse with serverUrl and participantToken
     """
-    lk_url = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
-    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
-    api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+    # LIVEKIT_EXTERNAL_URL is the LAN-accessible URL for iOS clients
+    # LIVEKIT_URL remains ws://127.0.0.1:7880 for the agent's own connection
+    lk_url = os.getenv("LIVEKIT_EXTERNAL_URL") or os.getenv("LIVEKIT_URL", "ws://localhost:7880")
+
+    # Get API credentials from livekit.yaml (source of truth)
+    # Fallback to environment variables if yaml not available
+    yaml_keys = _get_livekit_keys_from_yaml()
+    if yaml_keys:
+        api_key, api_secret = yaml_keys
+    else:
+        api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+        api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
+
+    logger.info(f"connection-details: using key={api_key[:8]}..., secret={api_secret[:8]}...")
+
     room_name = "voice_assistant_room"
 
     # TTL: 4h for extended session, 15min for standard
     ttl = 14400 if req.extended_session else 900
 
     try:
-        # Mint access token
+        # Mint access token — identity is required for room join
+        identity = f"client-{uuid.uuid4()}"
         token = (
             api.AccessToken(api_key, api_secret)
+            .with_identity(identity)
             .with_grants(api.VideoGrants(room_join=True, room=room_name))
-            .with_ttl(ttl)
+            .with_ttl(timedelta(seconds=ttl))
             .to_jwt()
         )
     except Exception as e:
-        logger.error(f"Failed to mint LiveKit token: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate access token")
+        logger.error(f"Failed to mint LiveKit token: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(f"Token generation traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Token generation failed: {str(e)}")
 
     # Dispatch agent to room if possible (non-fatal if fails)
     try:

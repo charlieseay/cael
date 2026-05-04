@@ -100,10 +100,9 @@ class SyncChunkedStream(tts.ChunkedStream):
         Puts chunk bytes as they arrive, then None as a sentinel when done.
         Puts an Exception instance on error (before the sentinel).
         """
-        # OpenAI-compatible TTS endpoint (preferred). Some stacks also expose
-        # /audio/speech, but /v1/audio/speech is the canonical path used by
-        # both slim services and Speaches compatibility mode.
-        url = f"{opts.base_url}/v1/audio/speech"
+        # OpenAI-compatible TTS endpoint. Use /audio/speech directly
+        # (base_url from voice_agent.py already excludes /v1 suffix)
+        url = f"{opts.base_url}/audio/speech"
         headers = {
             "Authorization": f"Bearer {opts.api_key}",
             "Content-Type": "application/json",

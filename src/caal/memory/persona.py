@@ -112,19 +112,13 @@ def load_persona_context(force_refresh: bool = False) -> str | None:
 
     sections: list[str] = []
 
-    # 1. Identity (Charlie + Cal profile)
-    identity = _load_file(memory_dir / "IDENTITY.md")
-    if identity:
-        # Strip the markdown header and primer section for context efficiency —
-        # inject the factual profile parts, not the meta-commentary.
-        sections.append(identity)
+    # Load all persona files — Cal's stable identity and behavioral contracts
+    for fname in ("IDENTITY.md", "SOUL.md", "RULES.md", "TOOLS.md"):
+        content = _load_file(memory_dir / fname)
+        if content:
+            sections.append(content)
 
-    # 2. Persona/soul (evolving traits)
-    soul = _load_file(memory_dir / "SOUL.md")
-    if soul:
-        sections.append(soul)
-
-    # 3. Recent conversation summary
+    # Recent conversation summary — last N turns for cross-session continuity
     turns_summary = _recent_turns_summary(memory_dir / "conversation-turns.json")
     if turns_summary:
         sections.append(turns_summary)

@@ -19,11 +19,16 @@ from .base import (
     MemorySource,
     MemoryStore,
 )
+from .persona import invalidate_cache as invalidate_persona_cache
+from .persona import load_persona_context
 from .short_term import ShortTermMemory
 
 __all__ = [
     # Classes
     "ShortTermMemory",
+    # Functions
+    "load_persona_context",
+    "invalidate_persona_cache",
     # Types
     "MemoryEntry",
     "MemorySource",

@@ -31,7 +31,7 @@ from collections.abc import AsyncIterable
 from typing import TYPE_CHECKING, Any
 
 from ..integrations.n8n import execute_n8n_workflow
-from ..memory import ShortTermMemory
+from ..memory import ShortTermMemory, load_persona_context
 from ..routing.policy import is_capacity_error
 from ..utils.formatting import strip_markdown_for_tts
 from .providers import LLMProvider
@@ -646,6 +646,13 @@ def _build_messages_from_context(
             context = tool_data_cache.get_context_message()
             if context:
                 system_content += f"\n\n{context}"
+
+        # Append persona context (IDENTITY, SOUL, recent conversation summary)
+        # Loaded once per process from CAAL_MEMORY_DIR — gives Cal continuity
+        # across restarts without bloating the prompt on every turn.
+        persona_context = load_persona_context()
+        if persona_context:
+            system_content += f"\n\n{persona_context}"
 
         # Append short-term memory context (only after user has spoken)
         has_user_message = any(m["role"] == "user" for m in chat_messages)

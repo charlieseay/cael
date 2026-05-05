@@ -98,7 +98,7 @@ async def _piper(text: str, *, voice: str) -> bytes:
         resp = await client.post(
             f"{url}/v1/audio/speech",
             json={
-                "model": voice,
+                "model": "piper",
                 "input": text,
                 "voice": voice,
                 "response_format": "wav",

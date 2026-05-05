@@ -42,7 +42,6 @@ from datetime import timedelta
 from typing import Any
 
 import httpx
-import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
@@ -57,50 +56,6 @@ from .routing.policy import policy_from_settings
 from .settings import validate_url
 
 logger = logging.getLogger(__name__)
-
-
-def _get_livekit_keys_from_yaml() -> tuple[str, str] | None:
-    """Read LIVEKIT API key and secret from livekit.yaml config file.
-
-    Searches in common locations:
-    - LIVEKIT_CONFIG environment variable
-    - ~/Library/Application Support/SoniqueBar/sidecar/config/livekit.yaml
-    - /Volumes/data/containers/livekit/config/livekit.yaml
-
-    Returns:
-        Tuple of (api_key, api_secret) if found, None otherwise
-    """
-    config_paths = [
-        os.getenv("LIVEKIT_CONFIG"),
-        os.path.expanduser("~/Library/Application Support/SoniqueBar/sidecar/config/livekit.yaml"),
-        "/Volumes/data/containers/livekit/config/livekit.yaml",
-    ]
-
-    logger.debug(f"Searching for livekit.yaml in: {config_paths}")
-
-    for path in config_paths:
-        if not path:
-            logger.debug(f"Skipping empty path")
-            continue
-        if not os.path.isfile(path):
-            logger.debug(f"File not found: {path}")
-            continue
-        try:
-            logger.info(f"Reading livekit config from: {path}")
-            with open(path) as f:
-                config = yaml.safe_load(f)
-            keys = config.get("keys", {})
-            if isinstance(keys, dict) and keys:
-                # keys is {api_key: api_secret, ...}
-                api_key, api_secret = next(iter(keys.items()))
-                logger.info(f"Loaded LiveKit keys from {path}: key={api_key[:8]}..., secret={api_secret[:8]}...")
-                return api_key, api_secret
-        except Exception as e:
-            logger.error(f"Error reading {path}: {type(e).__name__}: {e}")
-            continue
-
-    logger.warning("No LiveKit keys found from yaml files, will use fallback")
-    return None
 
 app = FastAPI(
     title="CAAL Webhook API",
@@ -120,19 +75,13 @@ app.add_middleware(
 
 def get_livekit_api() -> api.LiveKitAPI:
     """Get a LiveKit API client for sending data messages to agents."""
-    # Always try to read from livekit.yaml first (source of truth)
-    yaml_keys = _get_livekit_keys_from_yaml()
-    if yaml_keys:
-        api_key, api_secret = yaml_keys
-    else:
-        # Fallback to environment variables if yaml not available
-        api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
-        api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
-
+    url = os.getenv("LIVEKIT_URL", "http://localhost:7880")
+    # API client needs HTTP URL; agent uses ws:// for WebSocket, convert it
+    url = url.replace("wss://", "https://").replace("ws://", "http://")
     return api.LiveKitAPI(
-        url=os.getenv("LIVEKIT_URL", "http://localhost:7880"),
-        api_key=api_key,
-        api_secret=api_secret,
+        url=url,
+        api_key=os.getenv("LIVEKIT_API_KEY", "devkey"),
+        api_secret=os.getenv("LIVEKIT_API_SECRET", "secret"),
     )
 
 
@@ -458,18 +407,8 @@ async def get_connection_details(req: ConnectionDetailsRequest) -> ConnectionDet
     # LIVEKIT_EXTERNAL_URL is the LAN-accessible URL for iOS clients
     # LIVEKIT_URL remains ws://127.0.0.1:7880 for the agent's own connection
     lk_url = os.getenv("LIVEKIT_EXTERNAL_URL") or os.getenv("LIVEKIT_URL", "ws://localhost:7880")
-
-    # Get API credentials from livekit.yaml (source of truth)
-    # Fallback to environment variables if yaml not available
-    yaml_keys = _get_livekit_keys_from_yaml()
-    if yaml_keys:
-        api_key, api_secret = yaml_keys
-    else:
-        api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
-        api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
-
-    logger.info(f"connection-details: using key={api_key[:8]}..., secret={api_secret[:8]}...")
-
+    api_key = os.getenv("LIVEKIT_API_KEY", "devkey")
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "secret")
     room_name = "voice_assistant_room"
 
     # TTL: 4h for extended session, 15min for standard
@@ -495,12 +434,12 @@ async def get_connection_details(req: ConnectionDetailsRequest) -> ConnectionDet
     try:
         lk = get_livekit_api()
         await lk.agent_dispatch.create_dispatch(
-            api.CreateAgentDispatchRequest(room_name=room_name, agent_name="caal")
+            api.CreateAgentDispatchRequest(room=room_name, agent_name="caal")
         )
         await lk.aclose()
     except Exception as e:
         # Agent may already be running or dispatch client not configured — don't fail
-        logger.debug(f"Agent dispatch (non-fatal): {e}")
+        logger.warning(f"Agent dispatch (non-fatal): {e}")
 
     logger.info(f"Issued LiveKit token for room {room_name} (extended={req.extended_session})")
     return ConnectionDetailsResponse(serverUrl=lk_url, participantToken=token)

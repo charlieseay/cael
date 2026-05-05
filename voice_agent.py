@@ -681,8 +681,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     if tts_provider == "piper":
         piper_voice = runtime["tts_voice_piper"]
         tts_instance = SyncOpenAITTS(
-            base_url=PIPER_URL.rstrip("/"),
-            model=piper_voice,
+            base_url=PIPER_URL.rstrip("/") + "/v1",
+            model="piper",
             voice=piper_voice,  # caal-tts parses `voice` first; must be a real Piper voice name
             speed=TTS_SPEED,
             response_format="wav",  # caal-tts (slim stack) only emits wav

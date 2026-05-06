@@ -144,7 +144,7 @@ _ROOM_GUARD_WAIT_SECONDS = 6.0
 # Infrastructure config (from .env only - URLs, tokens, etc.)
 SPEACHES_URL = os.getenv("SPEACHES_URL", "http://speaches:8000")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-small")
-KOKORO_URL = os.getenv("KOKORO_URL", "http://127.0.0.1:8880")
+KOKORO_URL = os.getenv("KOKORO_URL", "http://kokoro:8880")
 PIPER_URL = os.getenv("PIPER_URL", SPEACHES_URL)  # Separate URL for Piper TTS
 TTS_MODEL = os.getenv("TTS_MODEL", "kokoro")
 TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
@@ -656,17 +656,62 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     requested_tts_provider = runtime["tts_provider"]
     tts_provider = requested_tts_provider
 
-    if tts_provider in ("auto", "piper"):
+    if tts_provider == "auto":
+        if language == "en" and _is_kokoro_healthy():
+            tts_provider = "kokoro"
+        else:
+            tts_provider = "piper"
+
+    # Only auto-route to Kokoro when the user requested automatic provider selection.
+    # If runtime settings explicitly request Piper, respect that choice.
+    if (
+        requested_tts_provider == "auto"
+        and
+        tts_provider == "piper"
+        and language == "en"
+        and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
+        and _is_kokoro_healthy()
+    ):
+        logger.info("Kokoro healthy on English session; overriding Piper to Kokoro")
         tts_provider = "kokoro"
 
-    logger.info(f"  TTS active: Kokoro ({runtime['tts_voice_kokoro']})")
+    # Auto-switch from Kokoro to Piper for non-English languages when Piper is available
+    if tts_provider == "kokoro" and language != "en":
+        # PIPER_URL defaults to SPEACHES_URL; if a dedicated Piper service is configured
+        # (PIPER_URL != KOKORO_URL), Piper is available
+        if PIPER_URL != KOKORO_URL:
+            logger.info(
+                f"Kokoro has limited {language} support, auto-switching to Piper"
+            )
+            tts_provider = "piper"
+        else:
+            logger.info(
+                f"Kokoro TTS with {language} (no Piper service available)"
+            )
 
-    tts_instance = SyncOpenAITTS(
-        base_url=KOKORO_URL.rstrip("/") + "/v1",
-        model="kokoro",
-        voice=runtime["tts_voice_kokoro"],
-        speed=TTS_SPEED,
-    )
+    if tts_provider == "piper":
+        logger.info(f"  TTS active: Piper ({runtime['tts_voice_piper']})")
+    else:
+        logger.info(f"  TTS active: Kokoro ({runtime['tts_voice_kokoro']})")
+
+    if tts_provider == "piper":
+        piper_voice = runtime["tts_voice_piper"]
+        tts_instance = SyncOpenAITTS(
+            base_url=PIPER_URL.rstrip("/") + "/v1",
+            model="piper",
+            voice=piper_voice,  # caal-tts parses `voice` first; must be a real Piper voice name
+            speed=TTS_SPEED,
+            response_format="wav",  # caal-tts (slim stack) only emits wav
+        )
+    else:
+        # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess
+        kokoro_model = "kokoro"
+        tts_instance = SyncOpenAITTS(
+            base_url=KOKORO_URL.rstrip("/") + "/v1",
+            model=kokoro_model,
+            voice=runtime["tts_voice_kokoro"],
+            speed=TTS_SPEED,
+        )
 
     # Create session with STT and TTS (both OpenAI-compatible)
     logger.info(f"  STT instance type: {type(stt_instance).__name__}")

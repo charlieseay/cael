@@ -291,6 +291,40 @@ async def llm_node(
             logger.info("Direct chat intent detected; skipping tools for this turn")
             tools = None
 
+        # CLI-based providers (claude_cli, gemini_cli, cursor_cli) cannot execute
+        # structured tool calls — they accept tools=None and return tool_calls=[].
+        # Without this guard the model receives tool names as context text and
+        # narrates what it would do ("I will call list_containers...") instead of
+        # actually invoking the tools.
+        #
+        # When the router selected a tool-incapable provider, try to de-escalate
+        # to the highest available tier that does support tools. This preserves
+        # tool calling for queries that landed on claude_cli/gemini_cli/cursor_cli
+        # due to complexity scoring but still need to execute tools.
+        if tools and not getattr(provider, "supports_tools", True):
+            fell_back = False
+            if _router is not None and _routed_tier is not None and _routed_tier > 0:
+                for fallback_tier in range(_routed_tier - 1, -1, -1):
+                    fp = _router._provider_for(fallback_tier)
+                    if getattr(fp, "supports_tools", True):
+                        logger.info(
+                            "Provider %s (tier %d) has no tool support; "
+                            "falling back to %s (tier %d) for this turn",
+                            getattr(provider, "provider_name", "?"), _routed_tier,
+                            getattr(fp, "provider_name", "?"), fallback_tier,
+                        )
+                        provider = fp
+                        _routed_tier = fallback_tier
+                        fell_back = True
+                        break
+            if not fell_back:
+                logger.info(
+                    "Provider %s has no tool support and no fallback available; "
+                    "skipping tool loop",
+                    getattr(provider, "provider_name", type(provider).__name__),
+                )
+                tools = None
+
         allow_discovery_tools = _allow_discovery_tools(_last_user if "_last_user" in locals() else None)
 
         if tools:

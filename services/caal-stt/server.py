@@ -1,6 +1,6 @@
 """caal-stt — lean speech-to-text microservice.
 
-Wraps faster-whisper. Exposes two endpoint shapes:
+Wraps faster-whisper. Exposes three endpoint shapes:
 
   1. OpenAI-compatible: POST /v1/audio/transcriptions
      multipart form with file, model, language, response_format — matches
@@ -10,6 +10,11 @@ Wraps faster-whisper. Exposes two endpoint shapes:
      multipart file field only; returns JSON with extra fields (language
      probability, duration). For direct callers that don't need OpenAI
      compatibility.
+
+  3. Streaming SSE: POST /v1/audio/transcriptions/stream
+     Same form as (1). Returns Server-Sent Events streaming each Whisper
+     segment as it completes. Final event has is_final=true with full text.
+     Enables partial transcript delivery for long utterances.
 
 The model loads once at startup and stays resident. FFmpeg is available
 in the container image so non-WAV inputs work.
@@ -23,6 +28,8 @@ Env:
   STT_BEAM_SIZE beam search size (default 5)
 """
 
+import asyncio
+import json
 import os
 import tempfile
 from contextlib import asynccontextmanager
@@ -30,7 +37,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from faster_whisper import WhisperModel
 
 MODEL_SIZE = os.getenv("STT_MODEL", "small.en")
@@ -52,18 +59,27 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="caal-stt", version="0.1.0", lifespan=lifespan)
 
 
-def _run_transcribe(
+def _iter_transcribe(
     audio_bytes: bytes,
     filename: str | None,
     *,
     language: str | None = None,
     initial_prompt: str | None = None,
     temperature: float = 0.0,
-) -> tuple[str, list, object]:
+    out_q: "asyncio.Queue | None" = None,
+    loop: "asyncio.AbstractEventLoop | None" = None,
+):
+    """Run transcription in a thread, yielding segments synchronously.
+
+    If out_q and loop are provided, also pushes each segment into the asyncio
+    queue (for SSE streaming). Pushes None as sentinel when done.
+    """
     if _model is None:
         raise HTTPException(status_code=503, detail="model not loaded")
     suffix = Path(filename or "in.wav").suffix or ".wav"
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    segments = []
+    info = None
     try:
         tmp.write(audio_bytes)
         tmp.close()
@@ -74,12 +90,31 @@ def _run_transcribe(
             initial_prompt=initial_prompt,
             temperature=temperature,
         )
-        # Materialize the generator once; text and segments both need it.
-        segments = list(segment_gen)
-        text = " ".join(s.text.strip() for s in segments).strip()
-        return text, segments, info
+        for seg in segment_gen:
+            segments.append(seg)
+            if out_q is not None and loop is not None:
+                loop.call_soon_threadsafe(out_q.put_nowait, seg)
     finally:
         Path(tmp.name).unlink(missing_ok=True)
+        if out_q is not None and loop is not None:
+            loop.call_soon_threadsafe(out_q.put_nowait, None)  # sentinel
+    return segments, info
+
+
+def _run_transcribe(
+    audio_bytes: bytes,
+    filename: str | None,
+    *,
+    language: str | None = None,
+    initial_prompt: str | None = None,
+    temperature: float = 0.0,
+) -> tuple[str, list, object]:
+    segments, info = _iter_transcribe(
+        audio_bytes, filename,
+        language=language, initial_prompt=initial_prompt, temperature=temperature,
+    )
+    text = " ".join(s.text.strip() for s in segments).strip()
+    return text, segments, info
 
 
 @app.get("/health")
@@ -90,6 +125,7 @@ def health() -> dict:
         "model": MODEL_SIZE,
         "device": DEVICE,
         "compute": COMPUTE_TYPE,
+        "beam_size": BEAM_SIZE,
     }
 
 
@@ -143,6 +179,48 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
         "language_probability": info.language_probability,
         "duration": info.duration,
     }
+
+
+@app.post("/v1/audio/transcriptions/stream")
+async def openai_transcriptions_stream(
+    file: UploadFile = File(...),
+    model: str | None = Form(None),
+    language: str | None = Form(None),
+    prompt: str | None = Form(None),
+    temperature: float = Form(0.0),
+) -> StreamingResponse:
+    """Stream Whisper segments via SSE as they complete.
+
+    Each event: data: {"text": str, "start": float, "end": float, "is_final": false}
+    Final event: data: {"text": str, "is_final": true}
+    """
+    data = await file.read()
+    loop = asyncio.get_event_loop()
+    out_q: asyncio.Queue = asyncio.Queue()
+
+    # Run transcription in thread pool so segments stream into the queue
+    asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: _iter_transcribe(
+            data, file.filename,
+            language=language, initial_prompt=prompt, temperature=temperature,
+            out_q=out_q, loop=loop,
+        ),
+    )
+
+    async def event_stream():
+        accumulated = []
+        while True:
+            seg = await out_q.get()
+            if seg is None:
+                # Final event with full concatenated text
+                full_text = " ".join(s.text.strip() for s in accumulated).strip()
+                yield f"data: {json.dumps({'text': full_text, 'is_final': True})}\n\n"
+                break
+            accumulated.append(seg)
+            yield f"data: {json.dumps({'text': seg.text.strip(), 'start': seg.start, 'end': seg.end, 'is_final': False})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

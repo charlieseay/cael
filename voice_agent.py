@@ -856,6 +856,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     # ==========================================================================
 
     _transcription_time: float | None = None
+    _vad_end_time: float | None = None  # set when user stops speaking (VAD endpoint)
 
     async def _publish_tool_status(
         tool_used: bool,
@@ -935,11 +936,27 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     assistant._on_ios_location_query = _ios_location_query
     # Register latency callbacks now that assistant exists — closures capture
     # `assistant` directly instead of an indirect _ref variable.
+    @session.on("user_state_changed")
+    def on_user_state_changed(ev) -> None:
+        nonlocal _vad_end_time
+        # Capture moment user stops speaking — this is the VAD endpoint, STT starts here
+        if ev.old_state == "speaking" and ev.new_state != "speaking":
+            _vad_end_time = time.perf_counter()
+
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(ev) -> None:
-        nonlocal _transcription_time
-        _transcription_time = time.perf_counter()
-        logger.debug(f"User said: {ev.transcript[:80]}...")
+        nonlocal _transcription_time, _vad_end_time
+        now = time.perf_counter()
+        _transcription_time = now
+        if _vad_end_time is not None:
+            stt_ms = (now - _vad_end_time) * 1000
+            logger.info(
+                "STT_METRIC stt_ms=%.0f transcript_len=%d",
+                stt_ms, len(ev.transcript),
+            )
+            _vad_end_time = None
+        else:
+            logger.debug(f"User said: {ev.transcript[:80]}...")
 
     @session.on("agent_state_changed")
     def on_agent_state_changed(ev) -> None:
@@ -952,15 +969,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             if trace and trace.total_ms > 0:
                 tts_ms = latency_ms - trace.total_ms
                 logger.info(
-                    f"VOICE_LATENCY stt_ms=na llm_ms={trace.total_ms:.0f} "
-                    f"tts_gen_ms=see_TTS_METRIC tts_play_start_ms={latency_ms:.0f} "
-                    f"tts_residual_ms={tts_ms:.0f} "
-                    f"({trace.summary()})"
+                    "VOICE_LATENCY llm_ms=%.0f tts_play_start_ms=%.0f tts_residual_ms=%.0f (%s)",
+                    trace.total_ms, latency_ms, tts_ms, trace.summary(),
                 )
             else:
                 logger.info(
-                    f"VOICE_LATENCY stt_ms=na llm_ms=na tts_gen_ms=see_TTS_METRIC "
-                    f"tts_play_start_ms={latency_ms:.0f}"
+                    "VOICE_LATENCY llm_ms=na tts_play_start_ms=%.0f",
+                    latency_ms,
                 )
 
             _transcription_time = None

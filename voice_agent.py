@@ -592,6 +592,11 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                 greeting = random.choice(wake_greetings)
                 logger.info(f"Wake word detected, playing greeting: {greeting}")
 
+                # Mark agent busy so silence timer doesn't close the gate
+                # while the greeting is playing (without this, the 3s window
+                # starts at wake detection, leaving <1s after a 2s greeting).
+                stt_instance.set_agent_busy(True)
+
                 # Get TTS and audio output from session
                 tts = _session_ref.tts
                 audio_output = _session_ref.output.audio
@@ -607,6 +612,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
             except Exception as e:
                 logger.warning(f"Failed to play wake greeting: {e}")
+            finally:
+                # Release busy state — this also resets _last_speech_time so the
+                # full silence window starts NOW (after greeting), not at detection.
+                stt_instance.set_agent_busy(False)
 
         async def on_state_changed(state):
             """Publish wake word state to connected clients."""

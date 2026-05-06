@@ -286,8 +286,12 @@ class WakeWordGatedStream(RecognizeStream):
             conn_options=self._conn_options,
         )
 
-        # Set initial state
-        await self._set_state(WakeWordState.LISTENING)
+        # Set initial state — respect bypass if it was applied before _run() started.
+        # set_bypass(True) sets _state=ACTIVE on the stream object, but _run() is
+        # scheduled async and always ran _set_state(LISTENING) unconditionally,
+        # overriding the bypass. Start ACTIVE when bypass is already set.
+        initial_state = WakeWordState.ACTIVE if self._bypass else WakeWordState.LISTENING
+        await self._set_state(initial_state)
 
         async def _process_audio() -> None:
             """Process incoming audio frames."""

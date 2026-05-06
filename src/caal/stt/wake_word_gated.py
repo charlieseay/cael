@@ -161,6 +161,11 @@ class WakeWordGatedSTT(STT):
         if self._active_stream:
             self._active_stream.set_agent_busy(busy)
 
+    def set_bypass(self, bypass: bool) -> None:
+        """Bypass wake word gate when a remote participant is actively connected."""
+        if self._active_stream:
+            self._active_stream.set_bypass(bypass)
+
     async def aclose(self) -> None:
         await self._inner.aclose()
 
@@ -217,6 +222,7 @@ class WakeWordGatedStream(RecognizeStream):
         self._inner_stream: RecognizeStream | None = None
         self._agent_busy: bool = False  # True while agent is thinking/speaking
         self._speech_active: bool = False  # True while VAD detects speech
+        self._bypass: bool = False  # When True, always forward audio (remote participant active)
 
     def set_agent_busy(self, busy: bool) -> None:
         """Set agent busy state - pauses silence timer while busy, resets when done."""
@@ -227,6 +233,22 @@ class WakeWordGatedStream(RecognizeStream):
         if was_busy and not busy:
             self._last_speech_time = time.time()
             logger.info("Agent done, follow-up window started")
+
+    def set_bypass(self, bypass: bool) -> None:
+        """Bypass wake word gating when a remote participant is actively connected.
+
+        When True: audio always forwards to inner STT, silence timer never closes
+        the gate. Wake word detection is still running but its result is ignored.
+        When False: normal wake-word-gated behaviour resumes.
+        """
+        self._bypass = bypass
+        if bypass:
+            # Force ACTIVE immediately so the participant can speak right away
+            self._state = WakeWordState.ACTIVE
+            self._last_speech_time = time.time()
+            logger.info("Wake word gate bypassed — remote participant active")
+        else:
+            logger.info("Wake word gate restored — no remote participant")
 
     async def _set_state(self, state: WakeWordState) -> None:
         """Update state and notify callback."""
@@ -313,9 +335,10 @@ class WakeWordGatedStream(RecognizeStream):
             while True:
                 await asyncio.sleep(0.5)  # Check every 500ms
 
-                # ACTIVE → LISTENING after silence_timeout
+                # ACTIVE → LISTENING after silence_timeout (skipped in bypass mode)
                 if (
                     self._state == WakeWordState.ACTIVE
+                    and not self._bypass
                     and not self._agent_busy
                     and not self._speech_active
                 ):

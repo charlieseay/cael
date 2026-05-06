@@ -1116,6 +1116,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         """Sync wrapper for async webhook command handler."""
         asyncio.create_task(_handle_webhook_command(data))
 
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant) -> None:
+        if isinstance(stt_instance, WakeWordGatedSTT):
+            logger.info(f"Remote participant connected ({participant.identity}) — bypassing wake word gate")
+            stt_instance.set_bypass(True)
+
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(participant) -> None:
+        if isinstance(stt_instance, WakeWordGatedSTT):
+            logger.info(f"Remote participant disconnected ({participant.identity}) — restoring wake word gate")
+            stt_instance.set_bypass(False)
+
     # Start session AFTER handlers are registered
     async def _teardown_session() -> None:
         # Resolve any pending iOS bridge callers before we tear the room down.

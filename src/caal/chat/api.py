@@ -298,6 +298,9 @@ async def _ensure_initialized() -> None:
             short_term_memory=_short_term_memory,
             provider=_llm.provider_instance,
         )
+        # Wire the model router so llm_node routes requests by complexity,
+        # matching the voice path where the router lives on agent.llm._router.
+        _tool_context._model_router = _llm._router
         await _tool_context.ensure_mcp_initialized()
 
         # Session manager with background cleanup

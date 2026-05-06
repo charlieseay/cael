@@ -166,19 +166,39 @@ def looks_like_simple_greeting(text: str) -> bool:
     q = _normalize_intent_text(text)
     if not q:
         return False
-    greetings = {
+    exact_greetings = {
         "hello",
         "hello cael",
         "hi",
         "hi cael",
         "hey",
         "hey cael",
+        "how are you",
+        "how are you doing",
+        "how are you today",
+        "how's it going",
+        "hows it going",
+        "how is it going",
+        "what's up",
+        "whats up",
+        "how do you do",
+        "howdy",
+        "sup",
     }
-    return q in greetings
+    if q in exact_greetings:
+        return True
+    casual_prefixes = [
+        "how are you",
+        "how's it going",
+        "hows it going",
+        "what's up cael",
+        "whats up cael",
+    ]
+    return any(q.startswith(p) for p in casual_prefixes)
 
 
 def simple_greeting_response() -> str:
-    return "Hey Charlie, I'm here."
+    return "Doing well, thanks. What can I help you with?"
 
 
 def looks_like_model_request(text: str) -> bool:

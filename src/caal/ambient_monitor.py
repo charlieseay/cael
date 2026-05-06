@@ -112,8 +112,18 @@ class AmbientMonitor:
 
         # Containers that stopped unexpectedly (not in known stopped set)
         newly_stopped = current_stopped - self._known_stopped
-        # Suppress common stopped containers (one-off runs, etc.)
-        newly_stopped = {n for n in newly_stopped if not n.startswith("tmp-")}
+        # Suppress containers that are intentionally stopped or superseded.
+        # caal-livekit / whisper: replaced by SoniqueBar sidecar (exited intentionally).
+        # caal-agent / caal-nginx / caal-frontend / caal-speaches-init: Docker-compose
+        # remnants from the old CAAL deployment, not used by SoniqueBar.
+        _SUPPRESSED = {
+            "caal-livekit", "whisper", "caal-agent",
+            "caal-nginx", "caal-frontend", "caal-speaches-init",
+        }
+        newly_stopped = {
+            n for n in newly_stopped
+            if not n.startswith("tmp-") and n not in _SUPPRESSED
+        }
         for name in newly_stopped:
             if name not in self._known_unhealthy:
                 self._queue_alert(Alert(

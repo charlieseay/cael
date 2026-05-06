@@ -4,7 +4,7 @@
   "prompt": "default",
   "language": "en",
   "llm_provider": "ollama",
-  "tts_provider": "auto",
+  "tts_provider": "kokoro",
   "tts_voice_kokoro": "am_puck",
   "tts_voice_piper": "speaches-ai/piper-en_US-ryan-high",
   "temperature": 0.15,

@@ -935,6 +935,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     assistant._on_ios_contacts_query = _ios_contacts_query
     assistant._on_ios_directions_query = _ios_directions_query
     assistant._on_ios_location_query = _ios_location_query
+    # Wire publish_data so VisionTools.capture_region / dismiss_screen can push to iOS
+    assistant._publish_data_fn = ctx.room.local_participant.publish_data
     # Register latency callbacks now that assistant exists — closures capture
     # `assistant` directly instead of an indirect _ref variable.
     @session.on("user_state_changed")

@@ -47,9 +47,13 @@ from .clipboard_tool import (
 )
 from .vision_tool import (
     TAKE_SCREENSHOT_TOOL_DEF,
+    CAPTURE_REGION_TOOL_DEF,
+    DISMISS_SCREEN_TOOL_DEF,
     ANALYZE_IMAGE_TOOL_DEF,
     VisionTools,
     execute_take_screenshot,
+    execute_capture_region,
+    execute_dismiss_screen,
     execute_analyze_image,
 )
 
@@ -101,8 +105,12 @@ __all__ = [
     "execute_get_clipboard",
     "execute_set_clipboard",
     "TAKE_SCREENSHOT_TOOL_DEF",
+    "CAPTURE_REGION_TOOL_DEF",
+    "DISMISS_SCREEN_TOOL_DEF",
     "ANALYZE_IMAGE_TOOL_DEF",
     "VisionTools",
     "execute_take_screenshot",
+    "execute_capture_region",
+    "execute_dismiss_screen",
     "execute_analyze_image",
 ]

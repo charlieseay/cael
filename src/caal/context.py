@@ -34,12 +34,16 @@ from .integrations import (
     SET_CLIPBOARD_TOOL_DEF,
     SHELL_TOOL_DEF,
     TAKE_SCREENSHOT_TOOL_DEF,
+    CAPTURE_REGION_TOOL_DEF,
+    DISMISS_SCREEN_TOOL_DEF,
     ANALYZE_IMAGE_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
     execute_analyze_image,
+    execute_capture_region,
+    execute_dismiss_screen,
     execute_explain_route_decision,
     execute_get_clipboard,
     execute_list_dir,
@@ -136,6 +140,7 @@ class ToolContext:
         self._hass_tool_callables: dict = {}
         self._on_tool_status = on_tool_status
         self._on_usage = None
+        self._on_publish_data = None  # set externally when LiveKit room is available
         self._llm_tools_cache: list[dict] | None = None
         self._llm_tools_cache_time: float = 0.0
         self._mcp_initialized = False
@@ -157,6 +162,8 @@ class ToolContext:
             GET_CLIPBOARD_TOOL_DEF,
             SET_CLIPBOARD_TOOL_DEF,
             TAKE_SCREENSHOT_TOOL_DEF,
+            CAPTURE_REGION_TOOL_DEF,
+            DISMISS_SCREEN_TOOL_DEF,
             ANALYZE_IMAGE_TOOL_DEF,
         ]
 
@@ -335,6 +342,16 @@ class ToolContext:
     async def take_screenshot(self, question: str = "") -> str:
         """Delegate to shared execute_take_screenshot()."""
         return await execute_take_screenshot(question=question)
+
+    async def capture_region(self, description: str, question: str = "") -> str:
+        """Delegate to shared execute_capture_region()."""
+        return await execute_capture_region(
+            description=description, question=question, publish_fn=self._on_publish_data
+        )
+
+    async def dismiss_screen(self) -> str:
+        """Delegate to shared execute_dismiss_screen()."""
+        return await execute_dismiss_screen(publish_fn=self._on_publish_data)
 
     async def analyze_image(
         self, image_b64: str, mime_type: str = "image/jpeg", question: str = ""

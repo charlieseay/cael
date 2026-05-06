@@ -116,6 +116,8 @@ _AGENTIC_COMPLEX_RE = [
         r"\bdocker\s+(ps|logs?|stats?|images?|inspect)\b",
         r"\b(what('s| is)|is there)\b.{0,20}\b(running|open|active|broken|failing|wrong)\b",
         r"\b(status of|health of|check on|look at)\b",
+        r"\b(container|containers|service|services|pod|pods)\b.{0,30}\b(need|needs|require|requires|attention|down|fail|error|issue|broken)\b",
+        r"\bwhat\b.{0,20}\b(container|containers|service|services)\b",
         r"\b(what('s| is) in my|check my)\b.{0,10}\b(clipboard|projects|repos?)\b",
         # Multi-step tasks
         r"\b(first|then|after that|next)\b.{0,20}\b(do|check|run|show)\b",

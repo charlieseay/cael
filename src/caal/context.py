@@ -22,9 +22,11 @@ from typing import TYPE_CHECKING
 _SERVER_IDLE_TTL = 300.0  # 5 minutes
 
 from .integrations import (
+    CALL_TOOL_TOOL_DEF,
     EXPLAIN_ROUTE_DECISION_TOOL_DEF,
     GET_CLIPBOARD_TOOL_DEF,
     LIST_DIR_TOOL_DEF,
+    LIST_TOOLS_TOOL_DEF,
     MEMORY_SHORT_TOOL_DEF,
     PERSONA_MEMORY_TOOL_DEF,
     READ_FILE_TOOL_DEF,
@@ -42,11 +44,13 @@ from .integrations import (
     detect_hass_tool_prefix,
     discover_n8n_workflows,
     execute_analyze_image,
+    execute_call_tool,
     execute_capture_region,
     execute_dismiss_screen,
     execute_explain_route_decision,
     execute_get_clipboard,
     execute_list_dir,
+    execute_list_tools,
     execute_memory_short,
     execute_persona_memory,
     execute_read_file,
@@ -149,6 +153,8 @@ class ToolContext:
         self._short_term_memory = short_term_memory
         self._provider = provider
         self._agent_tool_definitions: list[dict] = [
+            LIST_TOOLS_TOOL_DEF,
+            CALL_TOOL_TOOL_DEF,
             MEMORY_SHORT_TOOL_DEF,
             PERSONA_MEMORY_TOOL_DEF,
             WEB_SEARCH_TOOL_DEF,
@@ -270,6 +276,19 @@ class ToolContext:
     # -----------------------------------------------------------------
     # Agent-level tools (called via _execute_single_tool hasattr path)
     # -----------------------------------------------------------------
+
+    async def list_tools(self, search: str = "") -> str:
+        """Delegate to shared execute_list_tools()."""
+        return await execute_list_tools(search=search)
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: object = None,
+    ) -> str:
+        """Delegate to shared execute_call_tool()."""
+        return await execute_call_tool(server=server, tool=tool, arguments=arguments)
 
     async def memory_short(
         self,

@@ -273,3 +273,176 @@ class MCPHubTools:
             if parts:
                 return "\n".join(parts).strip()
         return json.dumps(result) if result else "Tool returned no content."
+
+
+# ---------------------------------------------------------------------------
+# Standalone execute functions — used by ToolContext (non-LiveKit chat path)
+# ---------------------------------------------------------------------------
+
+async def execute_list_tools(search: str = "") -> str:
+    """Search for available tools across connected MCP servers (no LiveKit dependency)."""
+    terms = [t.strip().lower() for t in (search or "").split() if t.strip()]
+    logger.info(f"execute_list_tools: {search!r} (terms={terms})")
+
+    results = await asyncio.gather(
+        *(_fetch_server_tools(s) for s in KNOWN_SERVERS),
+        return_exceptions=True,
+    )
+
+    matches: list[tuple[str, str, str]] = []
+    for server, tools in zip(KNOWN_SERVERS, results):
+        if isinstance(tools, BaseException) or not tools:
+            continue
+        for t in tools:
+            name = t.get("name", "")
+            desc = (t.get("description") or "").strip().replace("\n", " ")
+            haystack = f"{server} {name} {desc}"
+            if terms and not _match(haystack, terms):
+                continue
+            matches.append((server, name, desc))
+
+    if not matches:
+        return (
+            f"No tools matched '{search}'. "
+            f"Searched {', '.join(KNOWN_SERVERS)}. "
+            f"Try a broader keyword."
+        )
+
+    cap = 20
+    shown = matches[:cap]
+    lines = [f"[{server}.{name}] {desc[:180]}" for server, name, desc in shown]
+    trailer = ""
+    if len(matches) > cap:
+        trailer = f"\n... {len(matches) - cap} more. Narrow the search for a shorter list."
+    return "\n".join(lines) + trailer
+
+
+async def execute_call_tool(
+    server: str,
+    tool: str,
+    arguments: Any = None,
+) -> str:
+    """Invoke a specific MCP tool via the proxy (no LiveKit dependency)."""
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments) if arguments.strip() else {}
+        except json.JSONDecodeError:
+            return f"Tool error: arguments must be a JSON object. Got: {arguments[:120]!r}"
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        return f"Tool error: arguments must be a JSON object; got {type(arguments).__name__}."
+
+    logger.info(f"execute_call_tool: {server}.{tool}({arguments!r})")
+
+    if server not in KNOWN_SERVERS:
+        return (
+            f"Unknown server '{server}'. Valid servers: {', '.join(KNOWN_SERVERS)}. "
+            f"Call list_tools() first to discover the right one."
+        )
+    tools = await _fetch_server_tools(server)
+    known_names = {t.get("name") for t in tools}
+    if tool not in known_names:
+        sample = sorted(n for n in known_names if n)[:8]
+        return (
+            f"Server '{server}' has no tool '{tool}'. "
+            f"Sample tools on {server}: {', '.join(sample) or '(none listed)'}. "
+            f"Call list_tools() with a keyword to see the full match set."
+        )
+
+    url = f"{MCP_PROXY_URL}/{server}/mcp"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": tool, "arguments": arguments},
+    }
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_CALL_TIMEOUT) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = _parse_mcp_response(resp.text)
+    except httpx.HTTPStatusError as e:
+        return f"Tool call failed ({e.response.status_code}). Check server and tool name."
+    except Exception as e:
+        logger.warning(f"execute_call_tool failed: {e}")
+        return f"Tool call failed: {e}"
+
+    if "error" in data:
+        err = data["error"]
+        return f"Tool error: {err.get('message', err)}"
+
+    result = data.get("result", {})
+    content = result.get("content", [])
+    if isinstance(content, list) and content:
+        parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+        if parts:
+            return "\n".join(parts).strip()
+    return json.dumps(result) if result else "Tool returned no content."
+
+
+LIST_TOOLS_TOOL_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "list_tools",
+        "description": (
+            "Search for available tools across connected MCP servers. "
+            "Call this FIRST whenever the user asks to do something that might be "
+            "handled by an installed tool (home automation, calendar, reminders, "
+            "music, files, git, GitHub, databases, network checks, hardware, "
+            "Docker containers, infrastructure monitoring, etc.). "
+            "Known servers: " + ", ".join(KNOWN_SERVERS) + ". "
+            "Returns matching tool names with server and description. "
+            "Then call `call_tool` with the exact server and tool name."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "search": {
+                    "type": "string",
+                    "description": (
+                        "Space-separated keywords to search. Broader is fine — "
+                        "'container' will match portainer tools. "
+                        "Leave empty to list all tools."
+                    ),
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+CALL_TOOL_TOOL_DEF: dict = {
+    "type": "function",
+    "function": {
+        "name": "call_tool",
+        "description": (
+            "Invoke a specific MCP tool. You MUST call `list_tools` first to find "
+            "the exact server and tool name — do not guess or reuse names from training. "
+            "Args: server (e.g. 'portainer', 'ha', 'vault'), tool (exact name from list_tools), "
+            "arguments (JSON object of args, or {} if none)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "string",
+                    "description": "Server name exactly as returned by list_tools.",
+                },
+                "tool": {
+                    "type": "string",
+                    "description": "Tool name exactly as returned by list_tools.",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "JSON object of arguments to pass to the tool.",
+                },
+            },
+            "required": ["server", "tool"],
+        },
+    },
+}

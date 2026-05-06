@@ -8,7 +8,13 @@ from .helmsman_tool import HelmsmanTools
 from .ios_bridge_tools import iOSBridgeTools
 from .lightrag_tool import LightRAGTools
 from .mac_control_tool import MacControlTools
-from .mcp_hub_tool import MCPHubTools
+from .mcp_hub_tool import (
+    MCPHubTools,
+    LIST_TOOLS_TOOL_DEF,
+    CALL_TOOL_TOOL_DEF,
+    execute_list_tools,
+    execute_call_tool,
+)
 from .mcp_loader import MCPServerConfig, initialize_mcp_servers, load_mcp_config, prepare_lazy_mcp_servers
 from .network_tool import NetworkTools
 from .memory_tool import (
@@ -78,6 +84,10 @@ __all__ = [
     "load_mcp_config",
     "MacControlTools",
     "MCPHubTools",
+    "LIST_TOOLS_TOOL_DEF",
+    "CALL_TOOL_TOOL_DEF",
+    "execute_list_tools",
+    "execute_call_tool",
     "MCPServerConfig",
     "NetworkTools",
     "ROUTER_MEMORY_TOOL_DEF",

@@ -1116,6 +1116,16 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         """Sync wrapper for async webhook command handler."""
         asyncio.create_task(_handle_webhook_command(data))
 
+    # The iOS participant that triggered this agent job is already in the room
+    # before we get here — participant_connected will NOT fire for them.
+    # Set bypass eagerly so it's stored and applied when the STT stream is created.
+    if isinstance(stt_instance, WakeWordGatedSTT) and ctx.room.remote_participants:
+        logger.info(
+            f"Remote participant(s) already connected ({list(ctx.room.remote_participants.keys())}) "
+            "— pre-setting wake word bypass"
+        )
+        stt_instance.set_bypass(True)
+
     @ctx.room.on("participant_connected")
     def on_participant_connected(participant) -> None:
         if isinstance(stt_instance, WakeWordGatedSTT):

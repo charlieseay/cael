@@ -98,6 +98,7 @@ class WakeWordGatedSTT(STT):
         self._on_state_changed = on_state_changed
         self._oww: OWWModel | None = None
         self._active_stream: WakeWordGatedStream | None = None
+        self._pending_bypass: bool = False  # applied when stream() is called
 
     @property
     def model(self) -> str:
@@ -154,6 +155,9 @@ class WakeWordGatedSTT(STT):
             conn_options=conn_options,
         )
         self._active_stream = stream
+        # Apply any bypass that was set before the stream existed
+        if self._pending_bypass:
+            stream.set_bypass(True)
         return stream
 
     def set_agent_busy(self, busy: bool) -> None:
@@ -163,6 +167,7 @@ class WakeWordGatedSTT(STT):
 
     def set_bypass(self, bypass: bool) -> None:
         """Bypass wake word gate when a remote participant is actively connected."""
+        self._pending_bypass = bypass
         if self._active_stream:
             self._active_stream.set_bypass(bypass)
 

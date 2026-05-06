@@ -71,6 +71,7 @@ from caal.integrations import (  # noqa: E402
     PersonaMemoryTools,
     RouterTools,
     ShellTools,
+    VisionTools,
     WebSearchTools,
     create_hass_rest_tools,
     create_hass_tools,
@@ -303,7 +304,7 @@ def _last_user_utterance_text(chat_ctx) -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, PersonaMemoryTools, ShellTools, FilesystemTools, ClipboardTools, WebSearchTools, iOSBridgeTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, PersonaMemoryTools, ShellTools, FilesystemTools, ClipboardTools, VisionTools, WebSearchTools, iOSBridgeTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(
@@ -1041,6 +1042,24 @@ async def entrypoint(ctx: agents.JobContext) -> None:
                     _pending_location_future.set_result(payload)
                 except Exception as e:
                     logger.warning(f"Failed to parse ios_location_result: {e}")
+            return
+
+        if data.topic == "ios_image_input":
+            try:
+                import json as _json
+                from caal.integrations.vision_tool import execute_analyze_image
+                payload = _json.loads(data.data.decode("utf-8"))
+                image_b64 = payload.get("image_b64", "")
+                mime_type = payload.get("mime_type", "image/jpeg")
+                question = payload.get("question", "")
+                if not image_b64:
+                    logger.warning("ios_image_input: missing image_b64")
+                    return
+                logger.info(f"iOS image received: {mime_type}, question={question!r}")
+                result = await execute_analyze_image(image_b64, mime_type, question)
+                await session.say(result)
+            except Exception as e:
+                logger.error(f"Failed to process ios_image_input: {e}")
             return
 
         if data.topic != "webhook_command":

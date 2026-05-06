@@ -45,6 +45,13 @@ from .clipboard_tool import (
     execute_get_clipboard,
     execute_set_clipboard,
 )
+from .vision_tool import (
+    TAKE_SCREENSHOT_TOOL_DEF,
+    ANALYZE_IMAGE_TOOL_DEF,
+    VisionTools,
+    execute_take_screenshot,
+    execute_analyze_image,
+)
 
 __all__ = [
     "create_hass_rest_tools",
@@ -93,4 +100,9 @@ __all__ = [
     "ClipboardTools",
     "execute_get_clipboard",
     "execute_set_clipboard",
+    "TAKE_SCREENSHOT_TOOL_DEF",
+    "ANALYZE_IMAGE_TOOL_DEF",
+    "VisionTools",
+    "execute_take_screenshot",
+    "execute_analyze_image",
 ]

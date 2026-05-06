@@ -121,6 +121,11 @@ _AGENTIC_COMPLEX_RE = [
         r"\b(first|then|after that|next)\b.{0,20}\b(do|check|run|show)\b",
         r"\blist.{0,20}(project|file|folder|repo|container)s?\b",
         r"\b(show|tell) me (about|what|which).{0,20}(project|file|repo|container)s?\b",
+        # Vision — screenshot and image analysis always route to COMPLEX
+        r"\b(screenshot|screen shot|what('s| is) on (my )?screen|what do you see|analyze (this )?image)\b",
+        r"\b(look at|describe|read).{0,20}(screen|image|photo|picture|window)\b",
+        r"\bwhat does (this|the) (error|message|text) say\b",
+        r"\bwhat('s| is) (open|showing|visible|displayed)\b",
     ]
 ]
 

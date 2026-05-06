@@ -33,10 +33,13 @@ from .integrations import (
     ROUTE_TASK_TOOL_DEF,
     SET_CLIPBOARD_TOOL_DEF,
     SHELL_TOOL_DEF,
+    TAKE_SCREENSHOT_TOOL_DEF,
+    ANALYZE_IMAGE_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
+    execute_analyze_image,
     execute_explain_route_decision,
     execute_get_clipboard,
     execute_list_dir,
@@ -48,6 +51,7 @@ from .integrations import (
     execute_router_memory,
     execute_run_shell,
     execute_set_clipboard,
+    execute_take_screenshot,
     execute_web_search,
     initialize_mcp_servers,
 )
@@ -152,6 +156,8 @@ class ToolContext:
             LIST_DIR_TOOL_DEF,
             GET_CLIPBOARD_TOOL_DEF,
             SET_CLIPBOARD_TOOL_DEF,
+            TAKE_SCREENSHOT_TOOL_DEF,
+            ANALYZE_IMAGE_TOOL_DEF,
         ]
 
     async def ensure_mcp_initialized(self) -> None:
@@ -325,3 +331,13 @@ class ToolContext:
     async def set_clipboard(self, text: str) -> str:
         """Delegate to shared execute_set_clipboard()."""
         return await execute_set_clipboard(text=text)
+
+    async def take_screenshot(self, question: str = "") -> str:
+        """Delegate to shared execute_take_screenshot()."""
+        return await execute_take_screenshot(question=question)
+
+    async def analyze_image(
+        self, image_b64: str, mime_type: str = "image/jpeg", question: str = ""
+    ) -> str:
+        """Delegate to shared execute_analyze_image()."""
+        return await execute_analyze_image(image_b64=image_b64, mime_type=mime_type, question=question)

@@ -1,13 +1,17 @@
----
-tags: [cael, security, audit]
-created: 2026-05-06
-updated: 2026-05-06
-status: active
+# RETRO QA — Security & Code Quality Audit
+
+**Date:** 2026-05-06  
+**Scope:** ~/Projects/cael/ Python source files (excluding venv/, node_modules/)  
+**Auditor:** Claude Code
+
 ---
 
-# CAAL/Sonique Backend — Security & Code Quality Audit
+## Summary
 
-Scope: all Python source files in `~/Projects/cael/`. Findings below are ordered by severity.
+**Total Findings:** 12  
+**Critical:** 1 | **High:** 5 | **Medium:** 6
+
+Audit covers security (hardcoded secrets, unvalidated input to LLM/services, missing auth), efficiency (max_tokens, prompt caching, blocking calls in async), and code quality. Existing file included 12 findings; this audit confirms and validates all but refines severity/recommendations based on current code state.
 
 ---
 

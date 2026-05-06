@@ -148,42 +148,7 @@ class MCPHubTools:
             Lines in the form "[server.tool_name] description", or a hint that
             nothing matched.
         """
-        terms = [t.strip().lower() for t in (search or "").split() if t.strip()]
-        logger.info(f"list_tools: {search!r} (terms={terms})")
-
-        # Parallel fetch from every known server
-        results = await asyncio.gather(
-            *(_fetch_server_tools(s) for s in KNOWN_SERVERS),
-            return_exceptions=True,
-        )
-
-        matches: list[tuple[str, str, str]] = []  # (server, name, desc)
-        for server, tools in zip(KNOWN_SERVERS, results):
-            if isinstance(tools, BaseException) or not tools:
-                continue
-            for t in tools:
-                name = t.get("name", "")
-                desc = (t.get("description") or "").strip().replace("\n", " ")
-                haystack = f"{server} {name} {desc}"
-                if terms and not _match(haystack, terms):
-                    continue
-                matches.append((server, name, desc))
-
-        if not matches:
-            return (
-                f"No tools matched '{search}'. "
-                f"Searched {', '.join(KNOWN_SERVERS)}. "
-                f"Try a broader keyword."
-            )
-
-        # Cap the response so we don't blow context on a broad query
-        cap = 20
-        shown = matches[:cap]
-        lines = [f"[{server}.{name}] {desc[:180]}" for server, name, desc in shown]
-        trailer = ""
-        if len(matches) > cap:
-            trailer = f"\n... {len(matches) - cap} more. Narrow the search for a shorter list."
-        return "\n".join(lines) + trailer
+        return await execute_list_tools(search=search)
 
     @function_tool
     async def call_tool(
@@ -203,76 +168,7 @@ class MCPHubTools:
         Returns:
             The tool's response content, or an error pointing you back to list_tools.
         """
-        # Claude sometimes passes arguments as a JSON string instead of an object.
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments) if arguments.strip() else {}
-            except json.JSONDecodeError:
-                return (
-                    "Tool error: arguments must be a JSON object, not a string. "
-                    f"Got: {arguments[:120]!r}"
-                )
-        if arguments is None:
-            arguments = {}
-        if not isinstance(arguments, dict):
-            return f"Tool error: arguments must be a JSON object; got {type(arguments).__name__}."
-
-        logger.info(f"call_tool: {server}.{tool}({arguments!r})")
-
-        # Validate server and tool before hitting the network — catches hallucinated
-        # names up front and steers Claude back to list_tools.
-        if server not in KNOWN_SERVERS:
-            return (
-                f"Unknown server '{server}'. Valid servers: {', '.join(KNOWN_SERVERS)}. "
-                f"Call list_tools() first to discover the right one."
-            )
-        tools = await _fetch_server_tools(server)
-        known_names = {t.get("name") for t in tools}
-        if tool not in known_names:
-            # Show a short sample so Claude can self-correct
-            sample = sorted(n for n in known_names if n)[:8]
-            return (
-                f"Server '{server}' has no tool '{tool}'. "
-                f"Sample tools on {server}: {', '.join(sample) or '(none listed)'}. "
-                f"Call list_tools() with a keyword to see the full match set."
-            )
-
-        url = f"{MCP_PROXY_URL}/{server}/mcp"
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {"name": tool, "arguments": arguments},
-        }
-        headers = {
-            "Accept": "application/json, text/event-stream",
-            "Content-Type": "application/json",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=_CALL_TIMEOUT) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = _parse_mcp_response(resp.text)
-        except httpx.HTTPStatusError as e:
-            return f"Tool call failed ({e.response.status_code}). Check server and tool name."
-        except Exception as e:
-            logger.warning(f"call_tool failed: {e}")
-            return f"Tool call failed: {e}"
-
-        if "error" in data:
-            err = data["error"]
-            return f"Tool error: {err.get('message', err)}"
-
-        result = data.get("result", {})
-        content = result.get("content", [])
-        if isinstance(content, list) and content:
-            parts = []
-            for c in content:
-                if isinstance(c, dict) and c.get("type") == "text":
-                    parts.append(c.get("text", ""))
-            if parts:
-                return "\n".join(parts).strip()
-        return json.dumps(result) if result else "Tool returned no content."
+        return await execute_call_tool(server=server, tool=tool, arguments=arguments)
 
 
 # ---------------------------------------------------------------------------

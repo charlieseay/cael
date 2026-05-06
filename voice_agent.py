@@ -59,6 +59,8 @@ from livekit.plugins import openai, silero  # noqa: E402
 
 from caal import CAALLLM  # noqa: E402
 from caal.integrations import (  # noqa: E402
+    ClipboardTools,
+    FilesystemTools,
     HelmsmanTools,
     iOSBridgeTools,
     LightRAGTools,
@@ -66,7 +68,9 @@ from caal.integrations import (  # noqa: E402
     MCPHubTools,
     MemoryTools,
     NetworkTools,
+    PersonaMemoryTools,
     RouterTools,
+    ShellTools,
     WebSearchTools,
     create_hass_rest_tools,
     create_hass_tools,
@@ -151,6 +155,8 @@ LIGHTRAG_URL = os.getenv("LIGHTRAG_URL", "http://host.docker.internal:8128")
 
 # Import settings module for runtime-configurable values
 from caal import settings as settings_module  # noqa: E402
+from caal.session_briefing import build_brief, is_enabled as briefing_enabled  # noqa: E402
+from caal.ambient_monitor import AmbientMonitor  # noqa: E402
 
 
 def _is_kokoro_healthy(timeout_s: float = 1.5) -> bool:
@@ -297,7 +303,7 @@ def _last_user_utterance_text(chat_ctx) -> str:
 ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
-class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, WebSearchTools, iOSBridgeTools, Agent):
+class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, PersonaMemoryTools, ShellTools, FilesystemTools, ClipboardTools, WebSearchTools, iOSBridgeTools, Agent):
     """Voice assistant with MCP tools, web search, and short-term memory."""
 
     def __init__(
@@ -691,7 +697,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # Using SyncOpenAITTS to bypass httpx async issues in LiveKit subprocess
         kokoro_model = "kokoro"
         tts_instance = SyncOpenAITTS(
-            base_url=KOKORO_URL.rstrip("/"),
+            base_url=KOKORO_URL.rstrip("/") + "/v1",
             model=kokoro_model,
             voice=runtime["tts_voice_kokoro"],
             speed=TTS_SPEED,
@@ -1107,23 +1113,46 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except Exception as e:
             logger.warning(f"room disconnect cleanup failed: {e}")
 
+    _monitor = AmbientMonitor(
+        publish_data_fn=ctx.room.local_participant.publish_data
+    )
+    _monitor_task: asyncio.Task | None = None
+
     try:
         await session.start(
             room=ctx.room,
             agent=assistant,
         )
 
+        # Start background ambient monitoring
+        _monitor_task = asyncio.create_task(_monitor.run())
+
         # Brief pause so the audio channel is fully open before speaking — prevents first word cutoff
         await asyncio.sleep(0.8)
 
-        # Stability mode: skip automatic startup speech. This prevents the
-        # intro/online line from masking or replacing the first real reply.
+        # Session briefing — spoken immediately on connect if CAAL_SESSION_BRIEFING=true
+        # or session_briefing_enabled=true in settings.json.
+        if briefing_enabled(runtime):
+            try:
+                brief = await build_brief(runtime)
+                if brief:
+                    logger.info("session_briefing: delivering brief")
+                    await session.say(brief)
+            except Exception as _e:
+                logger.warning("session_briefing failed: %s", _e)
 
         logger.info("Agent ready - listening for speech...")
 
         # Wait until session closes (room disconnects, etc.)
         await close_event.wait()
     finally:
+        if _monitor_task is not None:
+            _monitor_task.cancel()
+            try:
+                await _monitor_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         async with _ROOM_GUARD_LOCK:
             _ACTIVE_ROOMS.discard(room_name)
             _DRAINING_ROOMS.add(room_name)

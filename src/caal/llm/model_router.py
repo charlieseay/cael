@@ -101,10 +101,37 @@ _DEVICE_KW = [
     "fan", "blind", "curtain", "switch", "plug", "sensor",
 ]
 
+# Agentic intent patterns — force MEDIUM or COMPLEX routing for requests that
+# require multi-step tool use. Small models (SIMPLE tier) cannot reliably chain
+# tool calls, so these patterns ensure the request reaches a capable model.
+_AGENTIC_COMPLEX_RE = [
+    re.compile(p, re.I) for p in [
+        # Filesystem read/write
+        r"\b(find|locate|search for)\b.{0,40}\b(file|folder|project|directory)\b",
+        r"\b(read|open|show me|what('s| is) in)\b.{0,30}\b(file|folder|note|config)\b",
+        r"\b(create|write|update|delete|modify)\b.{0,30}\b(file|note|config|document)\b",
+        # Shell / system queries
+        r"\b(run|execute|check|show me)\b.{0,30}\b(git|docker|build|test|log|status)\b",
+        r"\bgit\s+(status|log|diff|branch|stash)\b",
+        r"\bdocker\s+(ps|logs?|stats?|images?|inspect)\b",
+        r"\b(what('s| is)|is there)\b.{0,20}\b(running|open|active|broken|failing|wrong)\b",
+        r"\b(status of|health of|check on|look at)\b",
+        r"\b(what('s| is) in my|check my)\b.{0,10}\b(clipboard|projects|repos?)\b",
+        # Multi-step tasks
+        r"\b(first|then|after that|next)\b.{0,20}\b(do|check|run|show)\b",
+        r"\blist.{0,20}(project|file|folder|repo|container)s?\b",
+        r"\b(show|tell) me (about|what|which).{0,20}(project|file|repo|container)s?\b",
+    ]
+]
+
 
 def score_complexity(message: str) -> int:
     """Score a user message as SIMPLE (0), MEDIUM (1), or COMPLEX (2)."""
     for pat in _COMPLEX_RE:
+        if pat.search(message):
+            return COMPLEX
+    # Agentic intents require a capable model — route to COMPLEX
+    for pat in _AGENTIC_COMPLEX_RE:
         if pat.search(message):
             return COMPLEX
     for pat in _MEDIUM_RE:
@@ -316,7 +343,18 @@ class ModelRouter:
         return self._config
 
     async def _refresh_models_if_stale(self) -> None:
-        """Re-query Ollama and update tier models if the cache is expired."""
+        """Re-query Ollama and update tier models if the cache is expired.
+
+        Skipped entirely when no tier uses the ollama provider — avoids
+        a 1.5 s connection attempt every 5 minutes against a stopped server.
+        """
+        uses_ollama = (
+            self._config.simple_provider == "ollama"
+            or self._config.medium_provider == "ollama"
+        )
+        if not uses_ollama:
+            return
+
         now = time.time()
         if now - self._models_refreshed_at < _MODEL_CACHE_TTL:
             return

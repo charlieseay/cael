@@ -23,20 +23,31 @@ _SERVER_IDLE_TTL = 300.0  # 5 minutes
 
 from .integrations import (
     EXPLAIN_ROUTE_DECISION_TOOL_DEF,
+    GET_CLIPBOARD_TOOL_DEF,
+    LIST_DIR_TOOL_DEF,
     MEMORY_SHORT_TOOL_DEF,
+    PERSONA_MEMORY_TOOL_DEF,
+    READ_FILE_TOOL_DEF,
     ROUTER_MEMORY_TOOL_DEF,
     ROUTE_METRICS_TOOL_DEF,
     ROUTE_TASK_TOOL_DEF,
+    SET_CLIPBOARD_TOOL_DEF,
+    SHELL_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
-    create_hass_rest_tools,
     detect_hass_tool_prefix,
     discover_n8n_workflows,
     execute_explain_route_decision,
+    execute_get_clipboard,
+    execute_list_dir,
     execute_memory_short,
+    execute_persona_memory,
+    execute_read_file,
     execute_route_metrics,
     execute_route_task,
     execute_router_memory,
+    execute_run_shell,
+    execute_set_clipboard,
     execute_web_search,
     initialize_mcp_servers,
 )
@@ -130,11 +141,17 @@ class ToolContext:
         self._provider = provider
         self._agent_tool_definitions: list[dict] = [
             MEMORY_SHORT_TOOL_DEF,
+            PERSONA_MEMORY_TOOL_DEF,
             WEB_SEARCH_TOOL_DEF,
             ROUTE_TASK_TOOL_DEF,
             ROUTE_METRICS_TOOL_DEF,
             ROUTER_MEMORY_TOOL_DEF,
             EXPLAIN_ROUTE_DECISION_TOOL_DEF,
+            SHELL_TOOL_DEF,
+            READ_FILE_TOOL_DEF,
+            LIST_DIR_TOOL_DEF,
+            GET_CLIPBOARD_TOOL_DEF,
+            SET_CLIPBOARD_TOOL_DEF,
         ]
 
     async def ensure_mcp_initialized(self) -> None:
@@ -184,27 +201,6 @@ class ToolContext:
                     create_hass_tools(hass_server, tool_prefix=prefix)
                 )
                 logger.info("HASS tools ready: hass")
-            else:
-                # Fallback: Direct REST integration for embedded mode (no MCP proxy)
-                import os
-                ha_url = os.getenv("HA_URL") or os.getenv("HASS_URL", "")
-                ha_token = os.getenv("HA_TOKEN") or os.getenv("HASS_TOKEN", "")
-
-                # Also check settings.json (for SoniqueBar embedded sidecar)
-                from . import settings as settings_module
-                if not ha_url:
-                    ha_url = settings_module.load_settings().get("ha_url", "")
-                if not ha_token:
-                    ha_token = settings_module.load_settings().get("ha_token", "")
-
-                if ha_url and ha_token:
-                    try:
-                        self._hass_tool_definitions, self._hass_tool_callables = (
-                            create_hass_rest_tools(ha_url, ha_token)
-                        )
-                        logger.info(f"HASS tools ready (REST): hass at {ha_url}")
-                    except Exception as e:
-                        logger.warning(f"HA REST tools failed: {e}")
 
             # Clear tool cache so _discover_tools rebuilds with new MCP tools
             self._llm_tools_cache = None
@@ -278,6 +274,15 @@ class ToolContext:
             ttl=ttl,
         )
 
+    async def persona_memory(
+        self,
+        action: str,
+        file: str,
+        content: str = "",
+    ) -> str:
+        """Delegate to shared execute_persona_memory()."""
+        return await execute_persona_memory(action=action, file=file, content=content)
+
     async def web_search(self, query: str) -> str:
         """Delegate to shared execute_web_search()."""
         return await execute_web_search(
@@ -300,3 +305,23 @@ class ToolContext:
     async def explain_route_decision(self, task: str) -> str:
         """Delegate to shared execute_explain_route_decision()."""
         return await execute_explain_route_decision(task=task)
+
+    async def run_shell(self, command: str) -> str:
+        """Delegate to shared execute_run_shell()."""
+        return await execute_run_shell(command=command)
+
+    async def read_file(self, path: str) -> str:
+        """Delegate to shared execute_read_file()."""
+        return await execute_read_file(path=path)
+
+    async def list_dir(self, path: str) -> str:
+        """Delegate to shared execute_list_dir()."""
+        return await execute_list_dir(path=path)
+
+    async def get_clipboard(self) -> str:
+        """Delegate to shared execute_get_clipboard()."""
+        return await execute_get_clipboard()
+
+    async def set_clipboard(self, text: str) -> str:
+        """Delegate to shared execute_set_clipboard()."""
+        return await execute_set_clipboard(text=text)

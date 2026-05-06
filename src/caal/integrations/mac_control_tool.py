@@ -96,3 +96,79 @@ class MacControlTools:
         logger.info(f"mac_shell_command: {command!r}")
         action_id = enqueue("shell_command", {"command": command})
         return f"Shell command queued on your Mac. (action {action_id})"
+
+    @function_tool
+    async def mac_key_press(self, keys: str) -> str:
+        """Send a keyboard shortcut or keystroke on the user's Mac.
+
+        Use when the user asks you to press a key combination — like
+        Cmd+Space to open Spotlight, Cmd+Tab to switch apps, or any
+        other keyboard shortcut.
+
+        Args:
+            keys: Key combination string, e.g. "cmd+space", "cmd+tab",
+                  "cmd+c", "return", "escape". Use "+" to separate modifiers.
+
+        Returns:
+            Confirmation that the keystroke was queued.
+        """
+        logger.info(f"mac_key_press: {keys!r}")
+        action_id = enqueue("key_press", {"keys": keys})
+        return f"Key press '{keys}' queued on your Mac. (action {action_id})"
+
+    @function_tool
+    async def mac_send_notification(
+        self, message: str, title: str = "Cael", subtitle: str = ""
+    ) -> str:
+        """Send a macOS notification banner on the Mac Mini.
+
+        Use to surface important information proactively — alerts, reminders,
+        task completions, or anything the user should see even if they're not
+        looking at the Sonique app.
+
+        Args:
+            message: The notification body text.
+            title: Notification title (default: "Cael").
+            subtitle: Optional subtitle line.
+
+        Returns:
+            Confirmation that the notification was queued.
+        """
+        logger.info(f"mac_send_notification: title={title!r} msg={message!r}")
+        parts = [f'display notification "{message}"']
+        parts.append(f'with title "{title}"')
+        if subtitle:
+            parts.append(f'subtitle "{subtitle}"')
+        parts.append('sound name "default"')
+        script = " ".join(parts)
+        action_id = enqueue("run_applescript", {"script": script})
+        return f"Notification queued. (action {action_id})"
+
+    @function_tool
+    async def mac_get_active_app(self) -> str:
+        """Get the name of the currently focused application on the Mac Mini.
+
+        Use when the user asks 'what app is open?' or 'what's in focus?'
+        or when you need to know the active context before sending keystrokes.
+
+        Returns:
+            Name of the frontmost application, or an error message.
+        """
+        from ..mac_actions import wait_for_completion
+
+        script = (
+            'tell application "System Events" to '
+            'return name of first application process whose frontmost is true'
+        )
+        action_id = enqueue("run_applescript", {"script": script})
+        try:
+            action = await wait_for_completion(action_id, timeout=8.0)
+            if action.get("error"):
+                return f"Could not determine active app: {action['error']}"
+            result = (action.get("result") or "").strip()
+            return f"Active app: {result}" if result else "Could not determine active app."
+        except TimeoutError:
+            return "Timed out waiting for active app query."
+        except Exception as e:
+            logger.error(f"mac_get_active_app error: {e}")
+            return f"Error: {e}"

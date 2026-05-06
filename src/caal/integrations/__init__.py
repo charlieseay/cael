@@ -28,7 +28,23 @@ from .router_tool import (
     execute_route_task,
     execute_router_memory,
 )
+from .persona_tool import PERSONA_MEMORY_TOOL_DEF, PersonaMemoryTools, execute_persona_memory
 from .web_search import WEB_SEARCH_TOOL_DEF, WebSearchTools, execute_web_search
+from .shell_tool import SHELL_TOOL_DEF, ShellTools, execute_run_shell
+from .filesystem_tool import (
+    READ_FILE_TOOL_DEF,
+    LIST_DIR_TOOL_DEF,
+    FilesystemTools,
+    execute_read_file,
+    execute_list_dir,
+)
+from .clipboard_tool import (
+    GET_CLIPBOARD_TOOL_DEF,
+    SET_CLIPBOARD_TOOL_DEF,
+    ClipboardTools,
+    execute_get_clipboard,
+    execute_set_clipboard,
+)
 
 __all__ = [
     "create_hass_rest_tools",
@@ -59,6 +75,22 @@ __all__ = [
     "RouterTools",
     "MEMORY_SHORT_TOOL_DEF",
     "MemoryTools",
+    "PERSONA_MEMORY_TOOL_DEF",
+    "PersonaMemoryTools",
+    "execute_persona_memory",
     "WEB_SEARCH_TOOL_DEF",
     "WebSearchTools",
+    "SHELL_TOOL_DEF",
+    "ShellTools",
+    "execute_run_shell",
+    "READ_FILE_TOOL_DEF",
+    "LIST_DIR_TOOL_DEF",
+    "FilesystemTools",
+    "execute_read_file",
+    "execute_list_dir",
+    "GET_CLIPBOARD_TOOL_DEF",
+    "SET_CLIPBOARD_TOOL_DEF",
+    "ClipboardTools",
+    "execute_get_clipboard",
+    "execute_set_clipboard",
 ]

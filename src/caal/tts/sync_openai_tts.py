@@ -124,7 +124,7 @@ class SyncChunkedStream(tts.ChunkedStream):
                 headers=headers,
                 json=payload,
                 timeout=timeout,
-                stream=False,
+                stream=True,
             )
 
             # Backward-compatible fallback for older servers that only expose
@@ -136,7 +136,7 @@ class SyncChunkedStream(tts.ChunkedStream):
                     headers=headers,
                     json=payload,
                     timeout=timeout,
-                    stream=False,
+                    stream=True,
                 )
 
             if response.status_code != 200:
@@ -149,29 +149,40 @@ class SyncChunkedStream(tts.ChunkedStream):
                 loop.call_soon_threadsafe(out_q.put_nowait, exc)
                 return
 
-            audio_bytes = response.content or b""
-            request_ms = (time.perf_counter() - started_at) * 1000
-            if not audio_bytes:
+            # Stream chunks as they arrive so playback starts before the full
+            # audio has been generated. First chunk logged for latency tracking.
+            total_bytes = 0
+            is_first = True
+            for chunk in response.iter_content(chunk_size=4096):
+                if not chunk:
+                    continue
+                if is_first:
+                    first_ms = (time.perf_counter() - started_at) * 1000
+                    logger.info(
+                        "TTS_METRIC first_chunk_ms=%.0f format=%s voice=%s",
+                        first_ms, opts.response_format, opts.voice,
+                    )
+                    # WAV header must be intact in the first chunk
+                    if opts.response_format == "wav" and not chunk.startswith(b"RIFF"):
+                        loop.call_soon_threadsafe(
+                            out_q.put_nowait,
+                            APIConnectionError("TTS returned non-WAV payload for wav request"),
+                        )
+                        return
+                    is_first = False
+                total_bytes += len(chunk)
+                loop.call_soon_threadsafe(out_q.put_nowait, chunk)
+
+            if total_bytes == 0:
                 loop.call_soon_threadsafe(
                     out_q.put_nowait, APIConnectionError("TTS returned empty audio body")
                 )
                 return
-            # LiveKit's wav decoder expects the RIFF header at the beginning of
-            # the pushed payload. Push the full body as one chunk to avoid
-            # header-splitting issues across chunk boundaries.
-            if opts.response_format == "wav" and not audio_bytes.startswith(b"RIFF"):
-                loop.call_soon_threadsafe(
-                    out_q.put_nowait,
-                    APIConnectionError("TTS returned non-WAV payload for wav request"),
-                )
-                return
-            loop.call_soon_threadsafe(out_q.put_nowait, audio_bytes)
+
+            total_ms = (time.perf_counter() - started_at) * 1000
             logger.info(
-                "TTS_METRIC request_ms=%.0f bytes=%d format=%s voice=%s",
-                request_ms,
-                len(audio_bytes),
-                opts.response_format,
-                opts.voice,
+                "TTS_METRIC total_ms=%.0f bytes=%d format=%s voice=%s",
+                total_ms, total_bytes, opts.response_format, opts.voice,
             )
 
         except requests.exceptions.Timeout:

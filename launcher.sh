@@ -22,15 +22,28 @@ case "$SERVICE" in
     exec python -m uvicorn server:app --host 0.0.0.0 --port 8081 --log-level warning
     ;;
   tts)
-    export HOST=0.0.0.0 PORT=8082
-    export TTS_VOICE=en_US-ryan-high
-    export TTS_VOICE_DIR="$ROOT/models/piper"
-    export PIPER_BIN="$ROOT/piper/piper"
-    export DYLD_LIBRARY_PATH="$ROOT/piper:${DYLD_LIBRARY_PATH:-}"
-    cd "$ROOT/services/caal-tts"
-    exec python -m uvicorn server:app --host 0.0.0.0 --port 8082 --log-level warning
+    # Piper TTS removed — Kokoro handles all TTS on port 8880 (external service).
+    # Run a lightweight health stub on port 8082 so SidecarManager's readiness
+    # check passes. SidecarManager hardcodes TTS at 8082; this stub satisfies it.
+    exec python3 -c "
+import http.server, json, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type','application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'ok':True,'service':'tts-stub','provider':'kokoro'}).encode())
+    def log_message(self,*a): pass
+http.server.HTTPServer(('0.0.0.0',8082),H).serve_forever()
+"
     ;;
   agent)
+    # Evict any stale voice_agent process before binding its ports.
+    # Target the process by name rather than by port holder — lsof returns Docker
+    # Desktop's port-proxy PID on systems running Docker, not the actual agent.
+    pkill -9 -f "voice_agent.py" 2>/dev/null || true
+    sleep 1.5
     export LIVEKIT_URL="${LIVEKIT_URL:-ws://127.0.0.1:7880}"
     # Detect LAN IP so iOS clients receive a reachable WebSocket URL
     _LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "127.0.0.1")

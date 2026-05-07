@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 # Declared capability rate. LiveKit uses this for track setup; the emitter
 # re-initializes with the real rate from the WAV header on first chunk.
-# 22050 is the lowest common denominator (Piper output); Kokoro outputs 24000
-# but LiveKit resamples upward transparently — resampling down is lossier.
-SAMPLE_RATE = 22050
+# Kokoro (active TTS) outputs 24000 Hz natively. If Piper is re-introduced
+# (22050 Hz), lower this to 22050 — resampling up is cheaper than down.
+SAMPLE_RATE = 24000
 NUM_CHANNELS = 1
 
 

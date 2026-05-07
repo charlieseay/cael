@@ -22,7 +22,11 @@ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 
 logger = logging.getLogger(__name__)
 
-SAMPLE_RATE = 24000
+# Declared capability rate. LiveKit uses this for track setup; the emitter
+# re-initializes with the real rate from the WAV header on first chunk.
+# 22050 is the lowest common denominator (Piper output); Kokoro outputs 24000
+# but LiveKit resamples upward transparently — resampling down is lossier.
+SAMPLE_RATE = 22050
 NUM_CHANNELS = 1
 
 
@@ -164,9 +168,14 @@ class SyncChunkedStream(tts.ChunkedStream):
                     )
                     # WAV header must be intact in the first chunk
                     if opts.response_format == "wav" and not chunk.startswith(b"RIFF"):
+                        preview = chunk[:32].hex()
+                        logger.error(
+                            "TTS returned non-WAV payload: first 32 bytes=%s url=%s",
+                            preview, url,
+                        )
                         loop.call_soon_threadsafe(
                             out_q.put_nowait,
-                            APIConnectionError("TTS returned non-WAV payload for wav request"),
+                            APIConnectionError(f"TTS returned non-WAV payload (got {preview!r})"),
                         )
                         return
                     is_first = False

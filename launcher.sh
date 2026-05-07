@@ -35,13 +35,15 @@ case "$SERVICE" in
     # Detect LAN IP so iOS clients receive a reachable WebSocket URL
     _LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "127.0.0.1")
     export LIVEKIT_EXTERNAL_URL="${LIVEKIT_EXTERNAL_URL:-ws://${_LAN_IP}:7880}"
+    # Keys are set by SidecarManager from generated UUIDs; only fall back if somehow missing
     export LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
-    export LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
+    export LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-devlocalsecret}"
     export SPEACHES_URL=http://127.0.0.1:8081
     export PIPER_URL=http://127.0.0.1:8082
     export KOKORO_URL=http://127.0.0.1:8880
-    export TTS_PROVIDER=auto
-    export TTS_MODEL=auto
+    # Respect TTS_PROVIDER set by SidecarManager (user preference); default to auto-detect
+    export TTS_PROVIDER="${TTS_PROVIDER:-auto}"
+    export TTS_MODEL="${TTS_MODEL:-auto}"
     export WHISPER_MODEL=small.en
     export TIMEZONE="${TIMEZONE:-America/Chicago}"
     export TIMEZONE_DISPLAY="${TIMEZONE_DISPLAY:-Central Time}"
@@ -50,6 +52,8 @@ case "$SERVICE" in
     export CAAL_SESSION_BRIEFING=true
     export CAAL_NETWORK_STATE_PATH="$ROOT/../caal-network-state.json"
     export CAAL_MEMORY_DIR="$ROOT/../memory"
+    # Point settings.json at a stable sidecar-local path so settings persist across launches
+    export CAAL_SETTINGS_PATH="$ROOT/services/caal-agent/settings.json"
     export DYLD_LIBRARY_PATH="$ROOT/piper:${DYLD_LIBRARY_PATH:-}"
     # Export API keys from settings.json as env var fallbacks so provider SDKs
     # can always find them even if the router config loads before settings are warm.

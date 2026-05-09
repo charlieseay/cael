@@ -1,0 +1,34 @@
+{
+  "servers": [
+    {
+      "name": "vault",
+      "url": "http://localhost:3700/vault/",
+      "transport": "streamable_http",
+      "timeout": 15.0
+    },
+    {
+      "name": "ha",
+      "url": "http://localhost:3700/ha/",
+      "transport": "streamable_http",
+      "timeout": 10.0
+    },
+    {
+      "name": "homelab",
+      "url": "http://localhost:3700/homelab/",
+      "transport": "streamable_http",
+      "timeout": 15.0
+    },
+    {
+      "name": "bench",
+      "url": "http://localhost:3700/bench/",
+      "transport": "streamable_http",
+      "timeout": 10.0
+    },
+    {
+      "name": "bearing",
+      "url": "http://localhost:3700/bearing/",
+      "transport": "streamable_http",
+      "timeout": 10.0
+    }
+  ]
+}

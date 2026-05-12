@@ -57,6 +57,10 @@ cloud = [
     "livekit-plugins-cartesia~=1.0",
     "livekit-plugins-openai~=1.0",
 ]
+# Local Piper TTS microservice (services/caal-tts) — use `uv sync --extra sidecar` for dev.
+sidecar = [
+    "piper-tts>=1.2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/CoreWorxLab/caal"

@@ -30,6 +30,7 @@ import os
 import random
 import sys
 import time
+from collections.abc import Callable
 from urllib.parse import urljoin
 
 import requests
@@ -168,6 +169,88 @@ def _is_kokoro_healthy(timeout_s: float = 1.5) -> bool:
         return r.status_code == 200
     except Exception:
         return False
+
+
+def resolve_active_tts_provider(runtime: dict, language: str) -> str:
+    """Pick Kokoro vs Piper — must stay in sync with TTS construction below."""
+    requested = (runtime.get("tts_provider") or "auto").strip().lower()
+    tts_provider = requested
+    if tts_provider == "auto":
+        if language == "en" and _is_kokoro_healthy():
+            tts_provider = "kokoro"
+        else:
+            tts_provider = "piper"
+    if (
+        requested == "auto"
+        and tts_provider == "piper"
+        and language == "en"
+        and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
+        and _is_kokoro_healthy()
+    ):
+        logger.info("Kokoro healthy on English session; overriding Piper to Kokoro")
+        tts_provider = "kokoro"
+    if tts_provider == "kokoro" and language != "en":
+        if PIPER_URL != KOKORO_URL:
+            logger.info(
+                "Kokoro has limited %s support, auto-switching to Piper",
+                language,
+            )
+            tts_provider = "piper"
+        else:
+            logger.info(
+                "Kokoro TTS with %s (no Piper service available)",
+                language,
+            )
+    return tts_provider
+
+
+def _poll_json_ready(
+    label: str,
+    url: str,
+    *,
+    is_ready: Callable[[dict], bool],
+    attempts: int | None = None,
+    base_delay: float | None = None,
+    max_delay: float | None = None,
+) -> bool:
+    """Blocking GET + JSON readiness (for asyncio.to_thread). Exponential backoff."""
+    try:
+        n = max(1, int(os.getenv("CAAL_READINESS_ATTEMPTS", "24")))
+    except ValueError:
+        n = 24
+    if attempts is not None:
+        n = attempts
+    try:
+        delay = float(os.getenv("CAAL_READINESS_BASE_S", "0.75"))
+    except ValueError:
+        delay = 0.75
+    if base_delay is not None:
+        delay = base_delay
+    try:
+        cap = float(os.getenv("CAAL_READINESS_MAX_S", "8.0"))
+    except ValueError:
+        cap = 8.0
+    if max_delay is not None:
+        cap = max_delay
+
+    for i in range(n):
+        try:
+            r = requests.get(url, timeout=5.0)
+            if r.status_code == 200:
+                data = r.json()
+                if is_ready(data):
+                    if i > 0:
+                        logger.info("%s ready after %s probe(s)", label, i + 1)
+                    return True
+            else:
+                logger.info("%s readiness: HTTP %s", label, r.status_code)
+        except Exception as e:
+            logger.info("%s readiness probe %s/%s: %s", label, i + 1, n, e)
+        if i + 1 < n:
+            time.sleep(delay)
+            delay = min(delay * 2, cap)
+    logger.warning("%s not ready after %s attempts (%s)", label, n, url)
+    return False
 
 
 def get_wake_greetings(language: str) -> list[str]:
@@ -492,6 +575,37 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # Get runtime settings (from settings.json with .env fallback)
     runtime = get_runtime_settings()
+    language = runtime.get("language", "en")
+
+    # Local sidecar cold start: Whisper model and Piper daemon may need many seconds.
+    if runtime.get("stt_provider") != "groq":
+        stt_health = urljoin(SPEACHES_URL.rstrip("/") + "/", "health")
+        stt_ok = await asyncio.to_thread(
+            _poll_json_ready,
+            "caal-stt",
+            stt_health,
+            is_ready=lambda d: d.get("ok") is True,
+        )
+        if not stt_ok:
+            logger.warning(
+                "caal-stt never reported ok=true on /health — first STT request may fail until the model loads."
+            )
+
+    if resolve_active_tts_provider(runtime, language) == "piper":
+        piper_health = urljoin(PIPER_URL.rstrip("/") + "/", "health")
+        piper_ok = await asyncio.to_thread(
+            _poll_json_ready,
+            "caal-tts",
+            piper_health,
+            is_ready=lambda d: d.get("ok") is True,
+            attempts=8,
+            base_delay=0.4,
+            max_delay=3.0,
+        )
+        if not piper_ok:
+            logger.warning(
+                "caal-tts /health did not return ok=true — Piper POST may 404 until the service is running."
+            )
 
     # Set GROQ_API_KEY env var for plugins that read from environment
     if runtime.get("groq_api_key"):
@@ -499,8 +613,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     # Create CAALLLM instance (provider-agnostic wrapper)
     caal_llm = CAALLLM.from_settings(runtime)
-
-    language = runtime["language"]
 
     # Log configuration
     logger.info("=" * 60)
@@ -653,41 +765,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         logger.info("  Wake word: disabled")
 
     # Create TTS instance based on provider (auto routes to healthiest local option)
-    requested_tts_provider = runtime["tts_provider"]
-    tts_provider = requested_tts_provider
-
-    if tts_provider == "auto":
-        if language == "en" and _is_kokoro_healthy():
-            tts_provider = "kokoro"
-        else:
-            tts_provider = "piper"
-
-    # Only auto-route to Kokoro when the user requested automatic provider selection.
-    # If runtime settings explicitly request Piper, respect that choice.
-    if (
-        requested_tts_provider == "auto"
-        and
-        tts_provider == "piper"
-        and language == "en"
-        and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
-        and _is_kokoro_healthy()
-    ):
-        logger.info("Kokoro healthy on English session; overriding Piper to Kokoro")
-        tts_provider = "kokoro"
-
-    # Auto-switch from Kokoro to Piper for non-English languages when Piper is available
-    if tts_provider == "kokoro" and language != "en":
-        # PIPER_URL defaults to SPEACHES_URL; if a dedicated Piper service is configured
-        # (PIPER_URL != KOKORO_URL), Piper is available
-        if PIPER_URL != KOKORO_URL:
-            logger.info(
-                f"Kokoro has limited {language} support, auto-switching to Piper"
-            )
-            tts_provider = "piper"
-        else:
-            logger.info(
-                f"Kokoro TTS with {language} (no Piper service available)"
-            )
+    tts_provider = resolve_active_tts_provider(runtime, language)
 
     if tts_provider == "piper":
         logger.info(f"  TTS active: Piper ({runtime['tts_voice_piper']})")
@@ -1261,8 +1339,24 @@ def preload_models():
     t0 = time.perf_counter()
 
     def _preload_stt():
-        speaches_url = os.getenv("SPEACHES_URL", "http://speaches:8000")
+        speaches_url = os.getenv("SPEACHES_URL", "http://speaches:8000").rstrip("/")
         whisper_model = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-medium")
+        try:
+            health = requests.get(f"{speaches_url}/health", timeout=5)
+            if health.status_code == 200:
+                try:
+                    info = health.json()
+                except ValueError:
+                    info = {}
+                if info.get("service") == "caal-stt":
+                    logger.info(
+                        "  STT ready (caal-stt, model=%s)",
+                        info.get("model", whisper_model),
+                    )
+                    return
+        except Exception as e:
+            logger.debug("STT health probe skipped: %s", e)
+
         try:
             logger.info(f"  Loading STT: {whisper_model}")
             response = requests.post(
@@ -1311,22 +1405,7 @@ def preload_models():
 
     def _preload_tts():
         language = settings.get("language", "en")
-        requested_provider = settings.get("tts_provider", "auto")
-        selected_provider = requested_provider
-
-        if selected_provider == "auto":
-            if language == "en" and _is_kokoro_healthy():
-                selected_provider = "kokoro"
-            else:
-                selected_provider = "piper"
-
-        if (
-            selected_provider == "piper"
-            and language == "en"
-            and os.getenv("CAAL_TTS_FORCE_PIPER", "false").lower() != "true"
-            and _is_kokoro_healthy()
-        ):
-            selected_provider = "kokoro"
+        selected_provider = resolve_active_tts_provider(settings, language)
 
         if selected_provider == "kokoro":
             tts_url = f"{os.getenv('KOKORO_URL', KOKORO_URL).rstrip('/')}/v1/audio/speech"

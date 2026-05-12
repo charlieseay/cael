@@ -104,8 +104,7 @@ class SyncChunkedStream(tts.ChunkedStream):
         Puts chunk bytes as they arrive, then None as a sentinel when done.
         Puts an Exception instance on error (before the sentinel).
         """
-        # OpenAI-compatible TTS endpoint. Use /audio/speech directly
-        # (base_url from voice_agent.py already excludes /v1 suffix)
+        # OpenAI-compatible TTS: base_url is .../v1 (see voice_agent.py).
         url = f"{opts.base_url}/audio/speech"
         headers = {
             "Authorization": f"Bearer {opts.api_key}",
@@ -131,17 +130,18 @@ class SyncChunkedStream(tts.ChunkedStream):
                 stream=True,
             )
 
-            # Backward-compatible fallback for older servers that only expose
-            # /audio/speech instead of /v1/audio/speech.
+            # Fallback when only /audio/speech exists (no /v1 prefix); base_url is .../v1.
             if response.status_code == 404:
-                legacy_url = f"{opts.base_url}/audio/speech"
-                response = requests.post(
-                    legacy_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                    stream=True,
-                )
+                root = opts.base_url.removesuffix("/v1").rstrip("/")
+                legacy_url = f"{root}/audio/speech"
+                if legacy_url != url:
+                    response = requests.post(
+                        legacy_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout,
+                        stream=True,
+                    )
 
             if response.status_code != 200:
                 exc = APIStatusError(

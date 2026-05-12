@@ -6,8 +6,10 @@ Supports Kokoro, Speaches, and Piper HTTP backends.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 
 import httpx
 
@@ -91,22 +93,72 @@ async def _speaches(text: str, *, voice: str) -> bytes:
         return resp.content
 
 
+def _piper_retry_env() -> tuple[int, float, float]:
+    """Max attempts, base delay seconds, max delay cap (exponential backoff + jitter)."""
+    try:
+        attempts = max(1, int(os.getenv("CAAL_PIPER_HTTP_RETRIES", "6")))
+    except ValueError:
+        attempts = 6
+    try:
+        base = float(os.getenv("CAAL_PIPER_RETRY_BASE_S", "0.5"))
+    except ValueError:
+        base = 0.5
+    try:
+        cap = float(os.getenv("CAAL_PIPER_RETRY_MAX_S", "8.0"))
+    except ValueError:
+        cap = 8.0
+    return attempts, base, cap
+
+
 async def _piper(text: str, *, voice: str) -> bytes:
-    """Call local Piper OpenAI-compatible endpoint."""
-    url = os.getenv("PIPER_URL", _PIPER_DEFAULT)
+    """Call local Piper OpenAI-compatible endpoint (caal-tts or Speaches).
+
+    Retries with exponential backoff on connection errors and 502/503/504 so
+    cold starts (model download, process restart) do not fail a single client attempt.
+    """
+    url = (os.getenv("PIPER_URL", _PIPER_DEFAULT)).rstrip("/")
+    endpoint = f"{url}/v1/audio/speech"
+    payload = {
+        "model": "piper",
+        "input": text,
+        "voice": voice,
+        "response_format": "wav",
+    }
+    attempts, base_s, cap_s = _piper_retry_env()
+    last_exc: Exception | None = None
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{url}/v1/audio/speech",
-            json={
-                "model": "piper",
-                "input": text,
-                "voice": voice,
-                "response_format": "wav",
-            },
-            timeout=30.0,
-        )
-        resp.raise_for_status()
-        return resp.content
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = await client.post(endpoint, json=payload, timeout=60.0)
+                if resp.status_code in (502, 503, 504) and attempt < attempts:
+                    delay = min(cap_s, base_s * (2 ** (attempt - 1)))
+                    delay *= 0.85 + 0.3 * random.random()
+                    logger.warning(
+                        "Piper TTS %s (attempt %s/%s), retry in %.2fs",
+                        resp.status_code,
+                        attempt,
+                        attempts,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                resp.raise_for_status()
+                return resp.content
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+                last_exc = e
+                if attempt >= attempts:
+                    raise
+                delay = min(cap_s, base_s * (2 ** (attempt - 1)))
+                delay *= 0.85 + 0.3 * random.random()
+                logger.warning(
+                    "Piper TTS connection error (attempt %s/%s): %s; retry in %.2fs",
+                    attempt,
+                    attempts,
+                    e,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+    raise RuntimeError("Piper HTTP: internal error (retry loop fell through)")
 
 
 async def is_kokoro_available() -> bool:

@@ -22,21 +22,13 @@ case "$SERVICE" in
     exec python -m uvicorn server:app --host 0.0.0.0 --port 8081 --log-level warning
     ;;
   tts)
-    # Piper TTS removed — Kokoro handles all TTS on port 8880 (external service).
-    # Run a lightweight health stub on port 8082 so SidecarManager's readiness
-    # check passes. SidecarManager hardcodes TTS at 8082; this stub satisfies it.
-    exec python3 -c "
-import http.server, json, signal, sys
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-Type','application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps({'ok':True,'service':'tts-stub','provider':'kokoro'}).encode())
-    def log_message(self,*a): pass
-http.server.HTTPServer(('0.0.0.0',8082),H).serve_forever()
-"
+    # Real Piper (caal-tts) on 8082 — OpenAI-compatible POST /v1/audio/speech.
+    # A previous stub only answered GET, which made every Piper TTS call 404.
+    export HOST=0.0.0.0 PORT=8082
+    export TTS_VOICE_DIR="${TTS_VOICE_DIR:-$ROOT/models/piper-voices}"
+    mkdir -p "$TTS_VOICE_DIR"
+    cd "$ROOT/services/caal-tts"
+    exec python -m uvicorn server:app --host 0.0.0.0 --port 8082 --log-level warning
     ;;
   agent)
     # Evict any stale voice_agent process before binding its ports.

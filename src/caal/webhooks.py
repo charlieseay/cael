@@ -540,6 +540,28 @@ async def get_routing_policy() -> RoutingPolicyResponse:
     return RoutingPolicyResponse(policy=policy_from_settings(settings))
 
 
+def _piper_tts_base_url() -> str:
+    """URL for Piper TTS HTTP API (caal-tts, Speaches Piper, etc.)."""
+    return (
+        os.getenv("PIPER_URL")
+        or os.getenv("SPEACHES_URL")
+        or "http://speaches:8000"
+    ).rstrip("/")
+
+
+async def _piper_backend_is_caal_tts(base: str) -> bool:
+    """caal-tts pulls ONNX voices on first /v1/audio/speech — no /v1/models POST."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/health")
+            if r.status_code != 200:
+                return False
+            data = r.json()
+            return data.get("service") == "caal-tts"
+    except Exception:
+        return False
+
+
 async def _ensure_piper_model(model_id: str) -> None:
     """Ensure a Piper voice model is downloaded in the Speaches container.
 
@@ -550,8 +572,14 @@ async def _ensure_piper_model(model_id: str) -> None:
     """
     if not model_id or not model_id.startswith("speaches-ai/piper-"):
         return
-    base = os.getenv("PIPER_URL") or os.getenv("SPEACHES_URL") or "http://speaches:8000"
-    url = f"{base.rstrip('/')}/v1/models/{model_id}"
+    base = _piper_tts_base_url()
+    if await _piper_backend_is_caal_tts(base):
+        logger.info(
+            "Piper voice %s — caal-tts fetches ONNX on first speech; skipping Speaches model POST",
+            model_id,
+        )
+        return
+    url = f"{base}/v1/models/{model_id}"
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url)
@@ -830,7 +858,7 @@ async def download_piper_model(request: DownloadModelRequest) -> DownloadModelRe
     Returns:
         DownloadModelResponse with success status and message
     """
-    speaches_url = os.getenv("SPEACHES_URL", "http://speaches:8000")
+    piper_url = _piper_tts_base_url()
     model_id = request.model_id
 
     logger.info(f"Piper model download requested: {model_id}")
@@ -843,11 +871,24 @@ async def download_piper_model(request: DownloadModelRequest) -> DownloadModelRe
             message=f"Invalid Piper model ID: {model_id}"
         )
 
+    if await _piper_backend_is_caal_tts(piper_url):
+        logger.info(
+            "Piper model %s: using caal-tts (voice ONNX loads on first synthesis)",
+            model_id,
+        )
+        return DownloadModelResponse(
+            success=True,
+            message=(
+                f"Model '{model_id}' will be fetched by caal-tts on first use "
+                "(no separate download step)."
+            ),
+        )
+
     try:
         async with httpx.AsyncClient() as client:
             # Check if already downloaded
             check_response = await client.get(
-                f"{speaches_url}/v1/models/{model_id}",
+                f"{piper_url}/v1/models/{model_id}",
                 timeout=5.0,
             )
             if check_response.status_code == 200:
@@ -860,7 +901,7 @@ async def download_piper_model(request: DownloadModelRequest) -> DownloadModelRe
             # Download the model (~60MB, should take <30s)
             logger.info(f"Downloading Piper model: {model_id}")
             response = await client.post(
-                f"{speaches_url}/v1/models/{model_id}",
+                f"{piper_url}/v1/models/{model_id}",
                 timeout=60.0,
             )
             response.raise_for_status()

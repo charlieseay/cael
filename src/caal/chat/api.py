@@ -778,8 +778,9 @@ async def delete_session(session_id: str) -> DeleteResponse:
 async def chat_voice(req: ChatRequest) -> Response:
     """Text in → WAV audio out. Designed for Siri Shortcuts and PWA clients.
 
-    Same LLM pipeline as the voice path. Response is synthesized via Kokoro
-    (or Speaches fallback) and returned as audio/wav.
+    Same LLM pipeline as the voice path. Response is synthesized to WAV
+    (embedded: Piper via caal-tts / PIPER_URL; Docker: Kokoro or Speaches
+    depending on settings) and returned as audio/wav.
 
     Session ID is returned in the X-Session-Id response header so clients
     can maintain conversation continuity across turns.

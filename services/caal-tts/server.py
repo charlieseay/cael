@@ -90,7 +90,8 @@ def _render_wav(voice: PiperVoice, text: str) -> bytes:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    _get_voice(DEFAULT_VOICE)
+    # Do not block startup on HF voice download — Sidecar readiness uses GET /health.
+    # First POST /v1/audio/speech may take longer while the default voice is fetched.
     yield
     _voices.clear()
 

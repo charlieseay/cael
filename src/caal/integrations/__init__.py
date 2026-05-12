@@ -4,7 +4,19 @@ MCP integrations for voice assistant.
 
 from .hass import create_hass_tools, detect_hass_tool_prefix
 from .hass_rest import create_hass_rest_tools
-from .helmsman_tool import HelmsmanTools
+from .helmsman_tool import (
+    CHECK_TASK_TOOL_DEF,
+    DISPATCH_TASK_TOOL_DEF,
+    GET_TASK_QUEUE_STATUS_TOOL_DEF,
+    HelmsmanTools,
+    REPORT_ISSUE_TOOL_DEF,
+    UPDATE_TASK_TOOL_DEF,
+    execute_check_task,
+    execute_dispatch_task,
+    execute_get_task_queue_status,
+    execute_report_issue,
+    execute_update_task,
+)
 from .ios_bridge_tools import iOSBridgeTools
 from .lightrag_tool import LightRAGTools
 from .mac_control_tool import MacControlTools
@@ -76,7 +88,17 @@ __all__ = [
     "execute_router_memory",
     "execute_web_search",
     "EXPLAIN_ROUTE_DECISION_TOOL_DEF",
+    "CHECK_TASK_TOOL_DEF",
+    "DISPATCH_TASK_TOOL_DEF",
+    "GET_TASK_QUEUE_STATUS_TOOL_DEF",
     "HelmsmanTools",
+    "REPORT_ISSUE_TOOL_DEF",
+    "UPDATE_TASK_TOOL_DEF",
+    "execute_check_task",
+    "execute_dispatch_task",
+    "execute_get_task_queue_status",
+    "execute_report_issue",
+    "execute_update_task",
     "initialize_mcp_servers",
     "prepare_lazy_mcp_servers",
     "iOSBridgeTools",

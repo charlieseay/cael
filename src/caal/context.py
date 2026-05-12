@@ -23,13 +23,17 @@ _SERVER_IDLE_TTL = 300.0  # 5 minutes
 
 from .integrations import (
     CALL_TOOL_TOOL_DEF,
+    CHECK_TASK_TOOL_DEF,
+    DISPATCH_TASK_TOOL_DEF,
     EXPLAIN_ROUTE_DECISION_TOOL_DEF,
     GET_CLIPBOARD_TOOL_DEF,
+    GET_TASK_QUEUE_STATUS_TOOL_DEF,
     LIST_DIR_TOOL_DEF,
     LIST_TOOLS_TOOL_DEF,
     MEMORY_SHORT_TOOL_DEF,
     PERSONA_MEMORY_TOOL_DEF,
     READ_FILE_TOOL_DEF,
+    REPORT_ISSUE_TOOL_DEF,
     ROUTER_MEMORY_TOOL_DEF,
     ROUTE_METRICS_TOOL_DEF,
     ROUTE_TASK_TOOL_DEF,
@@ -39,6 +43,7 @@ from .integrations import (
     CAPTURE_REGION_TOOL_DEF,
     DISMISS_SCREEN_TOOL_DEF,
     ANALYZE_IMAGE_TOOL_DEF,
+    UPDATE_TASK_TOOL_DEF,
     WEB_SEARCH_TOOL_DEF,
     create_hass_tools,
     detect_hass_tool_prefix,
@@ -46,20 +51,25 @@ from .integrations import (
     execute_analyze_image,
     execute_call_tool,
     execute_capture_region,
+    execute_check_task,
     execute_dismiss_screen,
+    execute_dispatch_task,
     execute_explain_route_decision,
     execute_get_clipboard,
+    execute_get_task_queue_status,
     execute_list_dir,
     execute_list_tools,
     execute_memory_short,
     execute_persona_memory,
     execute_read_file,
+    execute_report_issue,
     execute_route_metrics,
     execute_route_task,
     execute_router_memory,
     execute_run_shell,
     execute_set_clipboard,
     execute_take_screenshot,
+    execute_update_task,
     execute_web_search,
     initialize_mcp_servers,
 )
@@ -171,6 +181,11 @@ class ToolContext:
             CAPTURE_REGION_TOOL_DEF,
             DISMISS_SCREEN_TOOL_DEF,
             ANALYZE_IMAGE_TOOL_DEF,
+            REPORT_ISSUE_TOOL_DEF,
+            DISPATCH_TASK_TOOL_DEF,
+            UPDATE_TASK_TOOL_DEF,
+            CHECK_TASK_TOOL_DEF,
+            GET_TASK_QUEUE_STATUS_TOOL_DEF,
         ]
 
     async def ensure_mcp_initialized(self) -> None:
@@ -337,6 +352,61 @@ class ToolContext:
     async def explain_route_decision(self, task: str) -> str:
         """Delegate to shared execute_explain_route_decision()."""
         return await execute_explain_route_decision(task=task)
+
+    async def report_issue(
+        self,
+        title: str,
+        description: str,
+        issue_type: str = "bug",
+    ) -> str:
+        return await execute_report_issue(title, description, issue_type)
+
+    async def dispatch_task(
+        self,
+        task: str,
+        brief: str,
+        project: str = "General",
+        owner: str = "CLAUDE",
+        effort: str = "M",
+    ) -> str:
+        return await execute_dispatch_task(
+            task=task, brief=brief, project=project, owner=owner, effort=effort
+        )
+
+    async def update_task(
+        self,
+        task_num: int,
+        task: str | None = None,
+        brief: str | None = None,
+        owner: str | None = None,
+        project: str | None = None,
+        effort: str | None = None,
+        status: str | None = None,
+    ) -> str:
+        return await execute_update_task(
+            task_num,
+            task=task,
+            brief=brief,
+            owner=owner,
+            project=project,
+            effort=effort,
+            status=status,
+        )
+
+    async def check_task(self, task_num: int) -> str:
+        return await execute_check_task(task_num)
+
+    async def get_task_queue_status(
+        self,
+        status_filter: str | None = None,
+        owner_filter: str | None = None,
+        task_num: int | None = None,
+    ) -> dict:
+        return await execute_get_task_queue_status(
+            status_filter=status_filter,
+            owner_filter=owner_filter,
+            task_num=task_num,
+        )
 
     async def run_shell(self, command: str) -> str:
         """Delegate to shared execute_run_shell()."""

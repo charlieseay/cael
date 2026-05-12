@@ -80,6 +80,7 @@ For personal/device resources (calendar, contacts, local Mac actions), prefer DI
 **Closed loop (Sonique's own operational tools)**
 - `report_issue(title, description, issue_type)` — file a bug or feature request with the engineering team
 - `dispatch_task(task, brief, project, owner, effort)` — queue concrete work for the team or a specialized agent
+- `update_task(task_num, task?, brief?, owner?, project?, effort?, status?)` — change fields on an existing queued task (no duplicate); status values include pending, in_progress, shipped, qa_failed
 - `check_task(task_num)` — look up the status of a previously dispatched task
 - `get_task_queue_status(status_filter, owner_filter, task_num)` — get queue overview (counts, breakdowns, pending list) or single-task detail; returns a voice_summary
 - `read_vault_note(vault_relative_path)` — read a vault markdown file by path (Hotsheet, handoff, project notes)

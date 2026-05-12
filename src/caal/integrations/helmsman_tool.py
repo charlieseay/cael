@@ -13,7 +13,7 @@ to a known, stable endpoint on the Mac Mini:
       Add concrete actionable work to the task queue. Use for "build X",
       "update Y", "investigate Z" type requests.
 
-  update_task(task_num, task, brief, owner, project, effort)
+  update_task(task_num, task, brief, owner, project, effort, status)
       Modify fields on a task that is still in pending status. Prevents
       duplicate tasks when the user wants to clarify or expand scope.
 
@@ -94,6 +94,17 @@ ACCEPTED_OWNERS: set[str] = {
     "RESEARCH",
     "TECHSPEC",
 }
+
+# Status values accepted for PATCH updates (Helmsman DB / queue semantics).
+_ACCEPTED_TASK_STATUSES: frozenset[str] = frozenset(
+    {"pending", "in_progress", "shipped", "qa_failed"}
+)
+
+
+def _normalize_task_status(raw: str) -> str | None:
+    s = raw.strip().lower().replace(" ", "_").replace("-", "_")
+    return s if s in _ACCEPTED_TASK_STATUSES else None
+
 
 # Friendly aliases the LLM might use — normalize to ACCEPTED_OWNERS.
 _OWNER_ALIASES: dict[str, str] = {
@@ -213,6 +224,7 @@ def build_task_update_fields(
     owner: Optional[str] = None,
     project: Optional[str] = None,
     effort: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build the PATCH payload for update_task, applying validation/normalization.
 
@@ -231,6 +243,10 @@ def build_task_update_fields(
     if effort is not None:
         e = effort.upper().strip()
         fields["effort"] = e if e in ("S", "M", "L", "XL") else "M"
+    if status is not None:
+        norm = _normalize_task_status(status)
+        if norm:
+            fields["status"] = norm
     return fields
 
 
@@ -327,6 +343,248 @@ def build_queue_status_response(
     }
 
 
+# ── JSON tool defs + executors for non-LiveKit callers (e.g. chat ToolContext) ──
+
+REPORT_ISSUE_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "report_issue",
+        "description": (
+            "File a bug or feature request for the Sonique/CAAL stack via the Helmsman queue."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short title (under 80 chars)."},
+                "description": {"type": "string", "description": "What happened and reproduction context."},
+                "issue_type": {
+                    "type": "string",
+                    "description": '"bug" or "feature".',
+                    "enum": ["bug", "feature"],
+                },
+            },
+            "required": ["title", "description"],
+        },
+    },
+}
+
+DISPATCH_TASK_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "dispatch_task",
+        "description": "Queue actionable work for an owner via the Helmsman dispatch webhook.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Short title (under 120 chars)."},
+                "brief": {"type": "string", "description": "Full context and acceptance criteria."},
+                "project": {"type": "string", "description": 'Project name (default "General").'},
+                "owner": {"type": "string", "description": "Queue owner (e.g. CLAUDE, CURSOR, QA)."},
+                "effort": {"type": "string", "description": "S, M, L, or XL.", "enum": ["S", "M", "L", "XL"]},
+            },
+            "required": ["task", "brief"],
+        },
+    },
+}
+
+UPDATE_TASK_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "update_task",
+        "description": (
+            "PATCH fields on an existing queue task (Helmsman DB). Use to change brief, "
+            "owner, effort, project, title, or status without creating a duplicate task."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_num": {"type": "integer", "description": "Task number from dispatch_task or report_issue."},
+                "task": {"type": "string", "description": "New short title (optional)."},
+                "brief": {"type": "string", "description": "Replacement brief_text (optional)."},
+                "owner": {"type": "string", "description": "New owner (optional)."},
+                "project": {"type": "string", "description": "New project (optional)."},
+                "effort": {"type": "string", "enum": ["S", "M", "L", "XL"], "description": "New effort (optional)."},
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Optional new status (pending, in_progress, shipped, qa_failed); "
+                        "spacing/case normalized."
+                    ),
+                },
+            },
+            "required": ["task_num"],
+        },
+    },
+}
+
+CHECK_TASK_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "check_task",
+        "description": "Look up one task by number from the Helmsman task list.",
+        "parameters": {
+            "type": "object",
+            "properties": {"task_num": {"type": "integer"}},
+            "required": ["task_num"],
+        },
+    },
+}
+
+GET_TASK_QUEUE_STATUS_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "get_task_queue_status",
+        "description": (
+            "Queue overview (counts, pending list) or single-task detail; includes voice_summary."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status_filter": {"type": "string", "description": "Optional status filter (case-insensitive)."},
+                "owner_filter": {"type": "string", "description": "Optional owner filter."},
+                "task_num": {"type": "integer", "description": "If set, return this task only."},
+            },
+            "required": [],
+        },
+    },
+}
+
+
+async def execute_report_issue(
+    title: str,
+    description: str,
+    issue_type: str = "bug",
+) -> str:
+    kind = issue_type.lower().strip() if issue_type else "bug"
+    if kind not in ("bug", "feature"):
+        kind = "bug"
+    tag = "BUG" if kind == "bug" else "FEATURE"
+    logger.info("report_issue (%s): %r", tag, title)
+    brief = (
+        f"Filed via Sonique voice.\n\n"
+        f"Type: {kind}\n"
+        f"Title: {title}\n\n"
+        f"Description:\n{description}\n\n"
+        f"Reported: {datetime.now(timezone.utc).isoformat()}"
+    )
+    ok, task_num, msg = await _dispatch(
+        task=f"[{tag}] {title}",
+        brief=brief,
+        owner="CLAUDE",
+        project="Sonique",
+        effort="S",
+    )
+    if ok:
+        ref = f" task #{task_num}" if task_num else ""
+        return f"Logged as {kind}{ref}. Engineering has it."
+    return f"Could not file the ticket — {msg}"
+
+
+async def execute_dispatch_task(
+    task: str,
+    brief: str,
+    project: str = "General",
+    owner: str = "CLAUDE",
+    effort: str = "M",
+) -> str:
+    o = _normalize_owner(owner)
+    logger.info("dispatch_task: %r → %s/%s", task, o, project)
+    e = effort.upper().strip() if effort else "M"
+    if e not in ("S", "M", "L", "XL"):
+        e = "M"
+    ok, task_num, msg = await _dispatch(
+        task=task,
+        brief=brief or task,
+        owner=o,
+        project=project or "General",
+        effort=e,
+    )
+    if ok:
+        ref = f"#{task_num} " if task_num else ""
+        return f"Task {ref}queued for {o}."
+    return f"Could not queue the task — {msg}"
+
+
+async def execute_update_task(
+    task_num: int,
+    task: Optional[str] = None,
+    brief: Optional[str] = None,
+    owner: Optional[str] = None,
+    project: Optional[str] = None,
+    effort: Optional[str] = None,
+    status: Optional[str] = None,
+) -> str:
+    if status is not None and str(status).strip():
+        if _normalize_task_status(str(status)) is None:
+            return (
+                "Invalid status — use pending, in_progress, shipped, or qa_failed "
+                "(hyphens or spaces are OK)."
+            )
+    fields = build_task_update_fields(task, brief, owner, project, effort, status)
+    if not fields:
+        return "Nothing to update — provide at least one field to change."
+    logger.info("update_task: #%s fields=%s", task_num, list(fields))
+    ok, msg = await _patch_task(task_num, fields)
+    if ok:
+        return f"Task #{task_num} updated."
+    return f"Could not update task #{task_num} — {msg}"
+
+
+async def execute_check_task(task_num: int) -> str:
+    logger.info("check_task: #%s", task_num)
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(f"{HELMSMAN_DB_URL}/tasks")
+            resp.raise_for_status()
+            rows = resp.json()
+    except Exception as e:
+        logger.warning("check_task failed: %s", e)
+        return f"Couldn't reach the task database: {e}"
+    t = next((r for r in rows if r.get("num") == task_num), None)
+    if not t:
+        return f"No task #{task_num} found."
+    status = t.get("status", "unknown")
+    owner = t.get("owner", "?")
+    project = t.get("project", "?")
+    title = (t.get("task") or "")[:80]
+    started = t.get("agent_started_at")
+    shipped = t.get("shipped_at")
+    bits = [f"Task #{task_num}: {status}", f"owner {owner}", f"project {project}"]
+    if started:
+        bits.append(f"started {str(started)[:16]}")
+    if shipped:
+        bits.append(f"shipped {str(shipped)[:16]}")
+    summary = ", ".join(bits)
+    if title:
+        summary += f". Title: {title}"
+    return summary
+
+
+async def execute_get_task_queue_status(
+    status_filter: Optional[str] = None,
+    owner_filter: Optional[str] = None,
+    task_num: Optional[int] = None,
+) -> dict[str, Any]:
+    logger.info(
+        "get_task_queue_status: status=%s owner=%s num=%s",
+        status_filter,
+        owner_filter,
+        task_num,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            resp = await client.get(f"{HELMSMAN_DB_URL}/tasks")
+            resp.raise_for_status()
+            rows: list[dict[str, Any]] = resp.json()
+    except Exception as e:
+        logger.warning("get_task_queue_status failed: %s", e)
+        return {"voice_summary": f"I couldn't reach the task database: {e}"}
+    if task_num is not None:
+        t = next((r for r in rows if r.get("num") == task_num), None)
+        return build_single_task_response(task_num, t)
+    return build_queue_status_response(rows, status_filter, owner_filter)
+
+
 class HelmsmanTools:
     """Closed-loop tools for bug reports, task dispatch, queue status, and idea capture."""
 
@@ -360,27 +618,7 @@ class HelmsmanTools:
         if kind not in ("bug", "feature"):
             kind = "bug"
 
-        tag = "BUG" if kind == "bug" else "FEATURE"
-        logger.info(f"report_issue ({tag}): {title!r}")
-
-        brief = (
-            f"Filed via Sonique voice.\n\n"
-            f"Type: {kind}\n"
-            f"Title: {title}\n\n"
-            f"Description:\n{description}\n\n"
-            f"Reported: {datetime.now(timezone.utc).isoformat()}"
-        )
-        ok, task_num, msg = await _dispatch(
-            task=f"[{tag}] {title}",
-            brief=brief,
-            owner="CLAUDE",
-            project="Sonique",
-            effort="S",
-        )
-        if ok:
-            ref = f" task #{task_num}" if task_num else ""
-            return f"Logged as {kind}{ref}. Engineering has it."
-        return f"Could not file the ticket — {msg}"
+        return await execute_report_issue(title, description, issue_type)
 
     @function_tool
     async def dispatch_task(
@@ -425,23 +663,13 @@ class HelmsmanTools:
             "Task #N queued for OWNER." on success, or a short error. Remember the
             number — you can look the task up later with check_task.
         """
-        o = _normalize_owner(owner)
-        logger.info(f"dispatch_task: {task!r} → {o}/{project}")
-        e = effort.upper().strip() if effort else "M"
-        if e not in ("S", "M", "L", "XL"):
-            e = "M"
-
-        ok, task_num, msg = await _dispatch(
+        return await execute_dispatch_task(
             task=task,
-            brief=brief or task,
-            owner=o,
-            project=project or "General",
-            effort=e,
+            brief=brief,
+            project=project,
+            owner=owner,
+            effort=effort,
         )
-        if ok:
-            ref = f"#{task_num} " if task_num else ""
-            return f"Task {ref}queued for {o}."
-        return f"Could not queue the task — {msg}"
 
     @function_tool
     async def update_task(
@@ -452,6 +680,7 @@ class HelmsmanTools:
         owner: Optional[str] = None,
         project: Optional[str] = None,
         effort: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> str:
         """Modify fields on a task that is still in pending status.
 
@@ -471,20 +700,20 @@ class HelmsmanTools:
             owner: New owner. Must be one of the accepted owner values.
             project: New project name.
             effort: New effort size — S, M, L, or XL.
+            status: New queue status — pending, in_progress, shipped, or qa_failed.
 
         Returns:
             "Task #N updated." on success, or an explanation of why it failed.
         """
-        fields = build_task_update_fields(task, brief, owner, project, effort)
-
-        if not fields:
-            return "Nothing to update — provide at least one field to change."
-
-        logger.info("update_task: #%d fields=%s", task_num, list(fields))
-        ok, msg = await _patch_task(task_num, fields)
-        if ok:
-            return f"Task #{task_num} updated."
-        return f"Could not update task #{task_num} — {msg}"
+        return await execute_update_task(
+            task_num,
+            task=task,
+            brief=brief,
+            owner=owner,
+            project=project,
+            effort=effort,
+            status=status,
+        )
 
     @function_tool
     async def check_task(self, task_num: int) -> str:
@@ -500,38 +729,7 @@ class HelmsmanTools:
         Returns:
             A short status summary, or a message that the task isn't found.
         """
-        logger.info(f"check_task: #{task_num}")
-        # The REST service doesn't support filtering by num — it only filters
-        # by status and owner. We fetch the full list (~150 rows, small) and
-        # scan. Cheap and avoids depending on an endpoint that doesn't exist.
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{HELMSMAN_DB_URL}/tasks")
-                resp.raise_for_status()
-                rows = resp.json()
-        except Exception as e:
-            logger.warning(f"check_task failed: {e}")
-            return f"Couldn't reach the task database: {e}"
-
-        t = next((r for r in rows if r.get("num") == task_num), None)
-        if not t:
-            return f"No task #{task_num} found."
-        status = t.get("status", "unknown")
-        owner = t.get("owner", "?")
-        project = t.get("project", "?")
-        title = (t.get("task") or "")[:80]
-        started = t.get("agent_started_at")
-        shipped = t.get("shipped_at")
-
-        bits = [f"Task #{task_num}: {status}", f"owner {owner}", f"project {project}"]
-        if started:
-            bits.append(f"started {started[:16]}")
-        if shipped:
-            bits.append(f"shipped {shipped[:16]}")
-        summary = ", ".join(bits)
-        if title:
-            summary += f". Title: {title}"
-        return summary
+        return await execute_check_task(task_num)
 
     @function_tool
     async def get_task_queue_status(
@@ -562,24 +760,7 @@ class HelmsmanTools:
             A dict with voice_summary (speakable sentence) plus either single-task
             fields or aggregated counts and a pending_tasks list.
         """
-        logger.info(
-            "get_task_queue_status: status=%s owner=%s num=%s",
-            status_filter, owner_filter, task_num,
-        )
-        try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-                resp = await client.get(f"{HELMSMAN_DB_URL}/tasks")
-                resp.raise_for_status()
-                rows: list[dict[str, Any]] = resp.json()
-        except Exception as e:
-            logger.warning("get_task_queue_status failed: %s", e)
-            return {"voice_summary": f"I couldn't reach the task database: {e}"}
-
-        if task_num is not None:
-            t = next((r for r in rows if r.get("num") == task_num), None)
-            return build_single_task_response(task_num, t)
-
-        return build_queue_status_response(rows, status_filter, owner_filter)
+        return await execute_get_task_queue_status(status_filter, owner_filter, task_num)
 
     @function_tool
     async def capture_idea(

@@ -273,3 +273,18 @@ def test_update_fields_partial_update_multiple_fields():
     assert fields["owner"] == "GEM"
     assert "brief_text" not in fields
     assert "project" not in fields
+
+
+def test_update_fields_valid_status():
+    fields = build_task_update_fields(status="pending")
+    assert fields["status"] == "pending"
+
+
+def test_update_fields_status_normalized():
+    fields = build_task_update_fields(status="In Progress")
+    assert fields["status"] == "in_progress"
+
+
+def test_update_fields_invalid_status_omitted():
+    fields = build_task_update_fields(status="not-a-real-status")
+    assert "status" not in fields

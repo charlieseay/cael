@@ -138,29 +138,44 @@ def _safe_json(value: Any) -> str:
         return str(value)
 
 
+def _json_from_response(resp: httpx.Response) -> Any:
+    return resp.json() if resp.content else {"ok": True}
+
+
 async def _post_json(
     client: httpx.AsyncClient,
     url: str,
     payload: dict[str, Any],
-) -> dict[str, Any]:
+) -> Any:
     resp = await client.post(url, json=payload)
     resp.raise_for_status()
-    return resp.json() if resp.content else {"ok": True}
+    return _json_from_response(resp)
+
+
+async def _route_post(payload: dict[str, Any]) -> Any:
+    base = _router_base_url()
+    async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
+        return await _post_json(client, f"{base}/route", payload)
+
+
+async def _route_get(path_suffix: str) -> Any:
+    base = _router_base_url()
+    async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
+        resp = await client.get(f"{base}{path_suffix}")
+        resp.raise_for_status()
+        return _json_from_response(resp)
 
 
 async def execute_route_task(task: str, context: str = "") -> str:
     if not task.strip():
         return "Task is required."
 
-    base = _router_base_url()
     payload: dict[str, Any] = {"task_description": task.strip()}
     if context.strip():
         payload["task_type_hint"] = context.strip()
 
     try:
-        async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
-            # POST /route — Quarterdeck classifier (task_description + optional task_type_hint)
-            data = await _post_json(client, f"{base}/route", payload)
+        data = await _route_post(payload)
         return _safe_json(data)
     except Exception as e:
         logger.warning("route_task failed: %s", e)
@@ -168,13 +183,8 @@ async def execute_route_task(task: str, context: str = "") -> str:
 
 
 async def execute_route_metrics() -> str:
-    base = _router_base_url()
     try:
-        async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
-            # GET /route/metrics — weekly routing stats
-            resp = await client.get(f"{base}/route/metrics")
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {"ok": True}
+        data = await _route_get("/route/metrics")
         return _safe_json(data)
     except Exception as e:
         logger.warning("route_metrics failed: %s", e)
@@ -187,12 +197,10 @@ async def execute_router_memory(query: str = "") -> str:
     params = {"query": q} if q else None
     try:
         async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
-            # GET /route/memory — preferred when Quarterdeck exposes KB over HTTP
             r = await client.get(f"{base}/route/memory", params=params)
             if r.status_code not in (404, 405):
                 r.raise_for_status()
-                data = r.json() if r.content else {"ok": True}
-                return _safe_json(data)
+                return _safe_json(_json_from_response(r))
 
             payload: dict[str, Any] = {"command": "memory"}
             if q:
@@ -206,8 +214,7 @@ async def execute_router_memory(query: str = "") -> str:
 
             r2 = await client.get(f"{base}/router/memory", params=params)
             r2.raise_for_status()
-            data = r2.json() if r2.content else {"ok": True}
-            return _safe_json(data)
+            return _safe_json(_json_from_response(r2))
     except Exception as e:
         logger.warning("router_memory failed: %s", e)
         return f"Quarterdeck router memory check failed: {e}"
@@ -217,7 +224,6 @@ async def execute_explain_route_decision(task: str) -> str:
     if not task.strip():
         return "Task is required."
 
-    base = _router_base_url()
     payload = {
         "task_description": task.strip(),
         "explain": True,
@@ -225,14 +231,11 @@ async def execute_explain_route_decision(task: str) -> str:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
-            # POST /route — same classifier as route_task, with explain hint for SoniqueBar
-            data = await _post_json(client, f"{base}/route", payload)
+        data = await _route_post(payload)
     except Exception as e:
         logger.warning("explain_route_decision failed: %s", e)
         return f"Quarterdeck route explanation failed: {e}"
 
-    # Normalize explanation if router doesn't emit a dedicated field.
     if isinstance(data, dict):
         if any(k in data for k in ("explanation", "reason", "rationale", "why")):
             return _safe_json(data)

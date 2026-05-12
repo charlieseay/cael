@@ -11,7 +11,7 @@ import os
 import httpx
 import pytest
 
-from caal.llm.providers import normalize_openai_api_base_url
+from caal.llm.providers import normalize_openai_api_base_url, normalize_ollama_host
 
 
 @pytest.mark.parametrize(
@@ -26,6 +26,20 @@ from caal.llm.providers import normalize_openai_api_base_url
 )
 def test_normalize_openai_api_base_url(raw: str, expected: str) -> None:
     assert normalize_openai_api_base_url(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("ollama_raw", "expected_host"),
+    [
+        ("http://localhost:11434", "http://localhost:11434"),
+        ("http://localhost:11434/v1", "http://localhost:11434"),
+        ("http://localhost:11434/v1/", "http://localhost:11434"),
+        ("", "http://localhost:11434"),
+        (None, "http://localhost:11434"),
+    ],
+)
+def test_normalize_ollama_host(ollama_raw: str | None, expected_host: str) -> None:
+    assert normalize_ollama_host(ollama_raw) == expected_host
 
 
 @pytest.mark.asyncio
@@ -43,7 +57,7 @@ async def test_live_piper_tts_returns_wav() -> None:
         for attempt in range(1, 8):
             try:
                 r = await client.post(url, json=payload, timeout=120.0)
-                if r.status_code in (502, 503, 504) and attempt < 7:
+                if r.status_code in (404, 502, 503, 504) and attempt < 7:
                     await asyncio.sleep(1.0 * attempt)
                     continue
                 r.raise_for_status()

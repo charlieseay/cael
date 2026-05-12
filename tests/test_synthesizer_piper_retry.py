@@ -38,6 +38,35 @@ async def test_piper_retries_503_then_ok(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_piper_retries_404_then_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PIPER_URL", "http://127.0.0.1:59997")
+    monkeypatch.setenv("CAAL_PIPER_HTTP_RETRIES", "4")
+    monkeypatch.setenv("CAAL_PIPER_RETRY_BASE_S", "0.01")
+    monkeypatch.setenv("CAAL_PIPER_RETRY_MAX_S", "0.05")
+
+    from caal.tts.synthesizer import _piper
+
+    req = httpx.Request("POST", "http://127.0.0.1:59997/v1/audio/speech")
+    r404 = httpx.Response(404, request=req)
+    r200 = httpx.Response(200, request=req, content=b"RIFFok")
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=[r404, r200])
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+
+    sleeper = AsyncMock()
+
+    with (
+        patch("caal.tts.synthesizer.httpx.AsyncClient", return_value=mock_client),
+        patch("caal.tts.synthesizer.asyncio.sleep", sleeper),
+    ):
+        out = await _piper("hi", voice="speaches-ai/piper-en_US-ryan-high")
+        assert out == b"RIFFok"
+        assert sleeper.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_piper_retries_connect_then_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PIPER_URL", "http://127.0.0.1:59998")
     monkeypatch.setenv("CAAL_PIPER_HTTP_RETRIES", "4")

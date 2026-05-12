@@ -516,6 +516,8 @@ class ModelRouter:
 
 def create_router_from_settings(settings: dict[str, Any]) -> ModelRouter:
     """Build a ModelRouter from CAAL settings. Always returns a router."""
+    from .providers import normalize_ollama_host, normalize_openai_api_base_url
+
     # User-specified ollama_model goes to the top of the medium preference list
     # so it wins in dynamic discovery without overriding the fallback default.
     user_model = settings.get("ollama_model", "")
@@ -551,11 +553,15 @@ def create_router_from_settings(settings: dict[str, Any]) -> ModelRouter:
         medium_preferences=medium_prefs,
         complex_provider=settings.get("router_complex_provider", "claude_cli"),
         complex_model=settings.get("router_complex_model", "claude-haiku-4-5"),
-        ollama_host=settings.get("ollama_host", "http://localhost:11434"),
+        ollama_host=normalize_ollama_host(
+            settings.get("ollama_host") or "http://localhost:11434"
+        ),
         think=settings.get("think", False),
         temperature=settings.get("temperature", 0.15),
         num_ctx=settings.get("num_ctx", 8192),
-        openai_base_url=settings.get("openai_base_url", "http://localhost:8000/v1"),
+        openai_base_url=normalize_openai_api_base_url(
+            settings.get("openai_base_url") or "http://localhost:8000/v1"
+        ),
         openai_api_key=settings.get("openai_api_key"),
         openrouter_api_key=settings.get("openrouter_api_key"),
         anthropic_api_key=settings.get("anthropic_api_key"),

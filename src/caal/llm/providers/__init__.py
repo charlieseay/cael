@@ -64,6 +64,7 @@ __all__ = [
     "GoogleProvider",
     "create_provider",
     "normalize_openai_api_base_url",
+    "normalize_ollama_host",
     "ModelRouter",
     "RouterConfig",
     "create_router_from_settings",
@@ -106,7 +107,10 @@ def create_provider(
     provider_name = provider_name.lower()
 
     if provider_name == "ollama":
-        return OllamaProvider(**kwargs)
+        kw = dict(kwargs)
+        if kw.get("base_url") is not None:
+            kw["base_url"] = normalize_ollama_host(kw["base_url"])
+        return OllamaProvider(**kw)
     elif provider_name == "groq":
         return GroqProvider(**kwargs)
     elif provider_name == "openai_compatible":
@@ -144,6 +148,21 @@ def normalize_openai_api_base_url(url: str | None) -> str:
     return f"{raw}/v1"
 
 
+def normalize_ollama_host(url: str | None) -> str:
+    """Return Ollama server root URL without an OpenAI-style ``/v1`` suffix.
+
+    Ollama exposes ``/api/tags``, ``/api/chat``, etc. at the host root. A host
+    like ``http://localhost:11434/v1`` (copied from OpenAI settings) yields 404
+    on every request.
+    """
+    raw = (url or "").strip().rstrip("/")
+    if not raw:
+        return "http://localhost:11434"
+    if raw.lower().endswith("/v1"):
+        raw = raw[:-3].rstrip("/")
+    return raw or "http://localhost:11434"
+
+
 def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
     """Create an LLM provider from CAAL settings dict.
 
@@ -176,7 +195,7 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
     if provider_name == "ollama":
         return OllamaProvider(
             model=settings.get("ollama_model", "qwen3:8b"),
-            base_url=settings.get("ollama_host"),
+            base_url=normalize_ollama_host(settings.get("ollama_host")),
             think=settings.get("think", False),
             temperature=settings.get("temperature", 0.15),
             num_ctx=settings.get("num_ctx", 8192),

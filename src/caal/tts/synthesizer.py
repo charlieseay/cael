@@ -28,19 +28,17 @@ async def synthesize(
 ) -> bytes:
     """Synthesize text to WAV bytes.
 
-    Tries Kokoro first (if available and not overridden), then Speaches.
-    Returns raw WAV bytes ready to send as audio/wav.
-
-    Args:
-        text: Text to synthesize.
-        voice: Voice ID override. Defaults to current settings value.
-        provider: Force "kokoro" or "speaches". Auto-detects if None.
+    Routes by ``tts_provider`` (from ``provider`` arg or settings): ``auto``
+    prefers Kokoro when its ``/health`` responds, otherwise Piper. ``kokoro``
+    and ``speaches`` are attempted first and fall back to Piper on failure so
+    Siri / SoniqueBar voice replies never return empty after a Docker-era
+    settings.json left ``tts_provider`` on Kokoro while only caal-tts runs.
 
     Returns:
         WAV audio bytes.
 
     Raises:
-        RuntimeError: If all TTS backends fail.
+        RuntimeError: If Piper (ultimate fallback) fails.
     """
     from ..settings import load_settings
 
@@ -49,12 +47,36 @@ async def synthesize(
     kokoro_voice = voice or cfg.get("tts_voice_kokoro", "bm_george")
     piper_voice = cfg.get("tts_voice_piper", "speaches-ai/piper-en_US-ryan-high")
 
-    # Embedded sidecar: Piper only (no remote fallback)
-    if tts_provider == "auto" or tts_provider == "piper":
-        tts_provider = "piper"
+    async def _piper_only() -> bytes:
+        return await _piper(text, voice=piper_voice)
+
+    if tts_provider == "auto":
+        if await is_kokoro_available():
+            try:
+                return await _kokoro(text, voice=kokoro_voice)
+            except Exception as e:
+                logger.warning("Kokoro failed during auto TTS (%s); using Piper", e)
+        return await _piper_only()
 
     if tts_provider == "piper":
-        return await _piper(text, voice=piper_voice)
+        return await _piper_only()
+
+    if tts_provider == "kokoro":
+        try:
+            return await _kokoro(text, voice=kokoro_voice)
+        except Exception as e:
+            logger.warning("Kokoro TTS failed (%s); falling back to Piper", e)
+        return await _piper_only()
+
+    if tts_provider == "speaches":
+        try:
+            return await _speaches(text, voice=piper_voice)
+        except Exception as e:
+            logger.warning("Speaches TTS failed (%s); falling back to Piper", e)
+        return await _piper_only()
+
+    logger.warning("Unknown tts_provider %r; using Piper", tts_provider)
+    return await _piper_only()
 
 
 async def _kokoro(text: str, *, voice: str) -> bytes:
@@ -113,8 +135,9 @@ def _piper_retry_env() -> tuple[int, float, float]:
 async def _piper(text: str, *, voice: str) -> bytes:
     """Call local Piper OpenAI-compatible endpoint (caal-tts or Speaches).
 
-    Retries with exponential backoff on connection errors and 502/503/504 so
-    cold starts (model download, process restart) do not fail a single client attempt.
+    Retries with exponential backoff on connection errors and 404/502/503/504 so
+    cold starts (route registration, model download, process restart) do not fail
+    a single client attempt.
     """
     url = (os.getenv("PIPER_URL", _PIPER_DEFAULT)).rstrip("/")
     endpoint = f"{url}/v1/audio/speech"
@@ -130,7 +153,7 @@ async def _piper(text: str, *, voice: str) -> bytes:
         for attempt in range(1, attempts + 1):
             try:
                 resp = await client.post(endpoint, json=payload, timeout=120.0)
-                if resp.status_code in (502, 503, 504) and attempt < attempts:
+                if resp.status_code in (404, 502, 503, 504) and attempt < attempts:
                     delay = min(cap_s, base_s * (2 ** (attempt - 1)))
                     delay *= 0.85 + 0.3 * random.random()
                     logger.warning(

@@ -51,6 +51,7 @@ from pydantic import BaseModel
 
 from . import network_state, registry_cache
 from . import settings as settings_module
+from .llm.providers import normalize_ollama_host
 from .memory import ShortTermMemory
 from .routing.policy import policy_from_settings
 from .settings import validate_url
@@ -932,7 +933,7 @@ async def get_models() -> ModelsResponse:
     Returns:
         ModelsResponse with list of model names
     """
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    ollama_host = normalize_ollama_host(os.getenv("OLLAMA_HOST", "http://localhost:11434"))
 
     try:
         async with httpx.AsyncClient() as client:

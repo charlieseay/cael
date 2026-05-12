@@ -116,6 +116,26 @@ class WelcomeScreen extends StatelessWidget {
                       );
                     },
                   ),
+                  Consumer<ctrl.AppCtrl>(
+                    builder: (ctx, appCtrl, _) {
+                      final err = appCtrl.lastConnectionError;
+                      if (err == null || err.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: Text(
+                          '${l10n.couldNotConnect}\n$err',
+                          style: const TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 14,
+                            height: 1.35,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),

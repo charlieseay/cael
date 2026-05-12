@@ -850,7 +850,7 @@ class DownloadModelResponse(BaseModel):
 
 @app.post("/download-piper-model", response_model=DownloadModelResponse)
 async def download_piper_model(request: DownloadModelRequest) -> DownloadModelResponse:
-    """Download a Piper TTS model to Speaches.
+    """Download a Piper TTS model (Speaches) or acknowledge lazy load (caal-tts).
 
     Args:
         request: Request containing model_id (e.g., "speaches-ai/piper-en_US-ljspeech-medium")

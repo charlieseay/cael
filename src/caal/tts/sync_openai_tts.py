@@ -10,6 +10,7 @@ import asyncio
 import io
 import logging
 import os
+import random
 import time
 import wave
 from concurrent.futures import ThreadPoolExecutor
@@ -105,109 +106,164 @@ class SyncChunkedStream(tts.ChunkedStream):
         Puts an Exception instance on error (before the sentinel).
         """
         # OpenAI-compatible TTS: base_url is .../v1 (see voice_agent.py).
-        url = f"{opts.base_url}/audio/speech"
-        headers = {
-            "Authorization": f"Bearer {opts.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "input": text,
-            "model": opts.model,
-            "voice": opts.voice,
-            "speed": opts.speed,
-            "response_format": opts.response_format,
-        }
+        logger.debug(f"Requesting TTS with model={opts.model}, voice={opts.voice}")
 
-        logger.debug(f"Requesting: {url} with model={opts.model}, voice={opts.voice}")
+        def _int_env(name: str, default: int) -> int:
+            try:
+                return max(1, int(os.getenv(name, str(default))))
+            except ValueError:
+                return default
+
+        def _float_env(name: str, default: float) -> float:
+            try:
+                return float(os.getenv(name, str(default)))
+            except ValueError:
+                return default
+
+        max_retries = _int_env("CAAL_SYNC_TTS_HTTP_RETRIES", 5)
+        base_wait = _float_env("CAAL_SYNC_TTS_RETRY_BASE_S", 0.6)
+        wait_cap = _float_env("CAAL_SYNC_TTS_RETRY_MAX_S", 6.0)
 
         try:
-            started_at = time.perf_counter()
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=timeout,
-                stream=True,
-            )
-
-            # Fallback when only /audio/speech exists (no /v1 prefix); base_url is .../v1.
-            if response.status_code == 404:
-                root = opts.base_url.removesuffix("/v1").rstrip("/")
-                legacy_url = f"{root}/audio/speech"
-                if legacy_url != url:
+            for attempt in range(1, max_retries + 1):
+                effective_url = f"{opts.base_url}/audio/speech"
+                headers = {
+                    "Authorization": f"Bearer {opts.api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "input": text,
+                    "model": opts.model,
+                    "voice": opts.voice,
+                    "speed": opts.speed,
+                    "response_format": opts.response_format,
+                }
+                try:
+                    started_at = time.perf_counter()
                     response = requests.post(
-                        legacy_url,
+                        effective_url,
                         headers=headers,
                         json=payload,
                         timeout=timeout,
                         stream=True,
                     )
 
-            if response.status_code != 200:
-                exc = APIStatusError(
-                    f"TTS request failed: {response.text}",
-                    status_code=response.status_code,
-                    request_id="",
-                    body=response.text,
-                )
-                loop.call_soon_threadsafe(out_q.put_nowait, exc)
-                return
+                    if response.status_code == 404:
+                        root = opts.base_url.removesuffix("/v1").rstrip("/")
+                        legacy_url = f"{root}/audio/speech"
+                        if legacy_url != effective_url:
+                            response.close()
+                            response = requests.post(
+                                legacy_url,
+                                headers=headers,
+                                json=payload,
+                                timeout=timeout,
+                                stream=True,
+                            )
+                            effective_url = legacy_url
 
-            # Stream chunks as they arrive so playback starts before the full
-            # audio has been generated. First chunk logged for latency tracking.
-            total_bytes = 0
-            is_first = True
-            for chunk in response.iter_content(chunk_size=4096):
-                if not chunk:
-                    continue
-                if is_first:
-                    first_ms = (time.perf_counter() - started_at) * 1000
-                    logger.info(
-                        "TTS_METRIC first_chunk_ms=%.0f format=%s voice=%s",
-                        first_ms, opts.response_format, opts.voice,
-                    )
-                    # WAV header must be intact in the first chunk
-                    if opts.response_format == "wav" and not chunk.startswith(b"RIFF"):
-                        preview = chunk[:32].hex()
-                        logger.error(
-                            "TTS returned non-WAV payload: first 32 bytes=%s url=%s",
-                            preview, url,
+                    if response.status_code in (502, 503, 504, 429) and attempt < max_retries:
+                        response.close()
+                        delay = min(
+                            wait_cap,
+                            base_wait * (2 ** (attempt - 1)),
+                        ) * (0.85 + 0.25 * random.random())
+                        logger.warning(
+                            "TTS HTTP %s on %s (attempt %s/%s), retry in %.2fs",
+                            response.status_code,
+                            effective_url,
+                            attempt,
+                            max_retries,
+                            delay,
                         )
+                        time.sleep(delay)
+                        continue
+
+                    if response.status_code != 200:
+                        exc = APIStatusError(
+                            f"TTS request failed: {response.text}",
+                            status_code=response.status_code,
+                            request_id="",
+                            body=response.text,
+                        )
+                        loop.call_soon_threadsafe(out_q.put_nowait, exc)
+                        return
+
+                    total_bytes = 0
+                    is_first = True
+                    for chunk in response.iter_content(chunk_size=4096):
+                        if not chunk:
+                            continue
+                        if is_first:
+                            first_ms = (time.perf_counter() - started_at) * 1000
+                            logger.info(
+                                "TTS_METRIC first_chunk_ms=%.0f format=%s voice=%s",
+                                first_ms,
+                                opts.response_format,
+                                opts.voice,
+                            )
+                            if opts.response_format == "wav" and not chunk.startswith(b"RIFF"):
+                                preview = chunk[:32].hex()
+                                logger.error(
+                                    "TTS returned non-WAV payload: first 32 bytes=%s url=%s",
+                                    preview,
+                                    effective_url,
+                                )
+                                response.close()
+                                loop.call_soon_threadsafe(
+                                    out_q.put_nowait,
+                                    APIConnectionError(
+                                        f"TTS returned non-WAV payload (got {preview!r})"
+                                    ),
+                                )
+                                return
+                            is_first = False
+                        total_bytes += len(chunk)
+                        loop.call_soon_threadsafe(out_q.put_nowait, chunk)
+
+                    response.close()
+
+                    if total_bytes == 0:
                         loop.call_soon_threadsafe(
                             out_q.put_nowait,
-                            APIConnectionError(f"TTS returned non-WAV payload (got {preview!r})"),
+                            APIConnectionError("TTS returned empty audio body"),
                         )
                         return
-                    is_first = False
-                total_bytes += len(chunk)
-                loop.call_soon_threadsafe(out_q.put_nowait, chunk)
 
-            if total_bytes == 0:
-                loop.call_soon_threadsafe(
-                    out_q.put_nowait, APIConnectionError("TTS returned empty audio body")
-                )
-                return
+                    total_ms = (time.perf_counter() - started_at) * 1000
+                    logger.info(
+                        "TTS_METRIC total_ms=%.0f bytes=%d format=%s voice=%s",
+                        total_ms,
+                        total_bytes,
+                        opts.response_format,
+                        opts.voice,
+                    )
+                    return
 
-            total_ms = (time.perf_counter() - started_at) * 1000
-            logger.info(
-                "TTS_METRIC total_ms=%.0f bytes=%d format=%s voice=%s",
-                total_ms, total_bytes, opts.response_format, opts.voice,
-            )
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    if attempt >= max_retries:
+                        logger.error("%s: %s", type(e).__name__, e)
+                        loop.call_soon_threadsafe(
+                            out_q.put_nowait,
+                            APIConnectionError(f"TTS connection failed after retries: {e}"),
+                        )
+                        return
+                    delay = min(
+                        wait_cap,
+                        base_wait * (2 ** (attempt - 1)),
+                    ) * (0.85 + 0.25 * random.random())
+                    logger.warning(
+                        "TTS %s (attempt %s/%s), retry in %.2fs",
+                        type(e).__name__,
+                        attempt,
+                        max_retries,
+                        delay,
+                    )
+                    time.sleep(delay)
 
-        except requests.exceptions.Timeout:
-            loop.call_soon_threadsafe(
-                out_q.put_nowait, APIConnectionError("TTS request timed out")
-            )
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"Connection error: {e}")
-            loop.call_soon_threadsafe(
-                out_q.put_nowait, APIConnectionError(f"TTS connection failed: {e}")
-            )
         except Exception as e:
             logger.error(f"{type(e).__name__}: {e}")
-            loop.call_soon_threadsafe(
-                out_q.put_nowait, APIConnectionError(str(e))
-            )
+            loop.call_soon_threadsafe(out_q.put_nowait, APIConnectionError(str(e)))
         finally:
             loop.call_soon_threadsafe(out_q.put_nowait, None)  # sentinel
 
@@ -215,7 +271,7 @@ class SyncChunkedStream(tts.ChunkedStream):
         """Stream TTS synthesis: thread feeds chunks into asyncio queue as they arrive."""
         loop = asyncio.get_running_loop()
         opts = self._tts._opts
-        timeout = max(30.0, self._conn_options.timeout)
+        timeout = max(120.0, float(os.getenv("CAAL_SYNC_TTS_TIMEOUT_S", "120")), self._conn_options.timeout)
 
         out_q: asyncio.Queue = asyncio.Queue()
 

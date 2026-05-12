@@ -63,6 +63,7 @@ __all__ = [
     "GeminiCLIProvider",
     "GoogleProvider",
     "create_provider",
+    "normalize_openai_api_base_url",
     "ModelRouter",
     "RouterConfig",
     "create_router_from_settings",
@@ -109,7 +110,10 @@ def create_provider(
     elif provider_name == "groq":
         return GroqProvider(**kwargs)
     elif provider_name == "openai_compatible":
-        return OpenAICompatibleProvider(**kwargs)
+        kw = dict(kwargs)
+        if "base_url" in kw:
+            kw["base_url"] = normalize_openai_api_base_url(kw["base_url"])
+        return OpenAICompatibleProvider(**kw)
     elif provider_name == "openrouter":
         return OpenRouterProvider(**kwargs)
     elif provider_name == "claude_cli":
@@ -128,6 +132,16 @@ def create_provider(
             f"Supported providers: ollama, groq, openai_compatible, openrouter, "
             f"claude_cli, cursor_cli, anthropic, gemini_cli, google"
         )
+
+
+def normalize_openai_api_base_url(url: str | None) -> str:
+    """Ensure OpenAI SDK base_url ends with /v1 (paths are relative to this host)."""
+    raw = (url or "").strip().rstrip("/")
+    if not raw:
+        return "http://localhost:8000/v1"
+    if raw.endswith("/v1"):
+        return raw
+    return f"{raw}/v1"
 
 
 def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
@@ -178,9 +192,12 @@ def create_provider_from_settings(settings: dict[str, Any]) -> LLMProvider:
     elif provider_name == "openai_compatible":
         # API key from settings, fallback to environment variable
         api_key = settings.get("openai_api_key") or os.environ.get("OPENAI_API_KEY")
+        raw_base = settings.get("openai_base_url") or os.environ.get(
+            "OPENAI_BASE_URL", "http://localhost:8000/v1"
+        )
         return OpenAICompatibleProvider(
             model=settings.get("openai_model", "gpt-3.5-turbo"),
-            base_url=settings.get("openai_base_url", "http://localhost:8000/v1"),
+            base_url=normalize_openai_api_base_url(raw_base),
             api_key=api_key,
             temperature=settings.get("temperature", 0.7),
         )

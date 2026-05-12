@@ -99,6 +99,9 @@ class AppCtrl extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _lastConnectionError;
+  String? get lastConnectionError => _lastConnectionError;
+
   bool isSendButtonEnabled = false;
   bool isSessionStarting = false;
   bool _hasCleanedUp = false;
@@ -216,10 +219,18 @@ class AppCtrl extends ChangeNotifier {
     notifyListeners();
 
     try {
+      _lastConnectionError = null;
+      notifyListeners();
       await _session.start();
       if (_session.connectionState == sdk.ConnectionState.connected) {
+        _lastConnectionError = null;
         appScreenState = AppScreenState.agent;
         unawaited(WakelockPlus.enable());
+        notifyListeners();
+      } else {
+        _lastConnectionError =
+            'Session did not reach the connected state. Check that LiveKit and the voice agent are running.';
+        appScreenState = AppScreenState.welcome;
         notifyListeners();
       }
     } catch (error, stackTrace) {
@@ -235,16 +246,23 @@ class AppCtrl extends ChangeNotifier {
         try {
           await _session.start();
           if (_session.connectionState == sdk.ConnectionState.connected) {
+            _lastConnectionError = null;
             appScreenState = AppScreenState.agent;
             unawaited(WakelockPlus.enable());
             notifyListeners();
             return;
           }
+          _lastConnectionError =
+              'Session did not connect after recreating native audio objects.';
         } catch (retryError, retryStack) {
           _logger.severe('Retry connection error: $retryError', retryError, retryStack);
+          final r = retryError.toString();
+          _lastConnectionError =
+              r.length > 480 ? '${r.substring(0, 480)}…' : r;
         }
       } else {
         _logger.severe('Connection error: $error', error, stackTrace);
+        _lastConnectionError = errorStr.length > 480 ? '${errorStr.substring(0, 480)}…' : errorStr;
       }
 
       appScreenState = AppScreenState.welcome;

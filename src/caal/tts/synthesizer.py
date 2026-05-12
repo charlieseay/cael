@@ -129,7 +129,7 @@ async def _piper(text: str, *, voice: str) -> bytes:
     async with httpx.AsyncClient() as client:
         for attempt in range(1, attempts + 1):
             try:
-                resp = await client.post(endpoint, json=payload, timeout=60.0)
+                resp = await client.post(endpoint, json=payload, timeout=120.0)
                 if resp.status_code in (502, 503, 504) and attempt < attempts:
                     delay = min(cap_s, base_s * (2 ** (attempt - 1)))
                     delay *= 0.85 + 0.3 * random.random()

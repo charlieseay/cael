@@ -829,7 +829,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         future: asyncio.Future = loop.create_future()
         _pending_calendar_future = future
 
-        payload = json.dumps({"start_date": start_date, "end_date": end_date})
+        # Emit full UTC RFC3339 timestamps so iOS' ISO8601DateFormatter parses
+        # them — date-only strings round-trip through Dart as
+        # "YYYY-MM-DDT00:00:00.000" (no tz) and the Swift parser silently
+        # rejects that, falling back to Date() and returning the wrong window.
+        from caal.integrations.ios_bridge_tools import iOSBridgeTools
+        start_iso, end_iso = iOSBridgeTools.to_rfc3339_calendar_range(start_date, end_date)
+        payload = json.dumps({"start_date": start_iso, "end_date": end_iso})
         try:
             await ctx.room.local_participant.publish_data(
                 payload.encode("utf-8"),

@@ -108,15 +108,20 @@ class iOSBridgeTools:
 
     @staticmethod
     def _normalize_calendar_range(start_date: str, end_date: str) -> tuple[str, str]:
-        """Normalize optional/invalid date inputs to a safe ISO range."""
+        """Normalize optional/invalid date inputs to a safe ISO range.
+
+        Accepts either date-only (``YYYY-MM-DD``) or full ISO datetime strings —
+        only the date portion is retained.
+        """
         today = dt.date.today()
 
         def _safe_parse(raw: str) -> dt.date | None:
             raw = (raw or "").strip()
             if not raw:
                 return None
+            # Accept date-only or full ISO datetime by taking the leading date.
             try:
-                return dt.date.fromisoformat(raw)
+                return dt.date.fromisoformat(raw[:10])
             except Exception:
                 return None
 
@@ -125,6 +130,22 @@ class iOSBridgeTools:
         if end < start:
             end = start
         return start.isoformat(), end.isoformat()
+
+    @staticmethod
+    def to_rfc3339_calendar_range(start_date: str, end_date: str) -> tuple[str, str]:
+        """Convert an ISO date range into a full-day UTC RFC3339 datetime range.
+
+        The iOS bridge (Dart → Swift) chokes on bare date strings: Dart's
+        ``DateTime.tryParse("2026-04-28").toIso8601String()`` emits
+        ``"2026-04-28T00:00:00.000"`` (no timezone, with fractional seconds),
+        which Swift's default ``ISO8601DateFormatter`` rejects — silently
+        falling back to ``Date()`` and yielding the wrong window. Emitting an
+        unambiguous ``…T00:00:00Z`` / ``…T23:59:59Z`` pair on the Python side
+        sidesteps the format mismatch and the zero-width range that happens
+        when start == end.
+        """
+        start_iso, end_iso = iOSBridgeTools._normalize_calendar_range(start_date, end_date)
+        return f"{start_iso}T00:00:00Z", f"{end_iso}T23:59:59Z"
 
     @staticmethod
     def _result_needs_calendar_fallback(raw_result: str) -> bool:

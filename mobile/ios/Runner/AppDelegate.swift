@@ -173,11 +173,49 @@ import MediaPlayer
         }
     }
 
+    private func parseFlexibleISODate(_ raw: String) -> Date? {
+        // Dart's `toIso8601String()` emits fractional seconds without an
+        // explicit timezone (e.g. "2026-04-28T00:00:00.000"); the backend may
+        // emit a date-only string ("2026-04-28") or a strict RFC3339 with Z.
+        // Try the strict ISO8601 parsers first, then fall back to lenient
+        // DateFormatter patterns so any of those shapes parses successfully.
+        let isoWithFractional = ISO8601DateFormatter()
+        isoWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoWithFractional.date(from: raw) { return d }
+
+        let isoPlain = ISO8601DateFormatter()
+        isoPlain.formatOptions = [.withInternetDateTime]
+        if let d = isoPlain.date(from: raw) { return d }
+
+        let patterns = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd",
+        ]
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(secondsFromGMT: 0)
+        for pattern in patterns {
+            df.dateFormat = pattern
+            if let d = df.date(from: raw) { return d }
+        }
+        return nil
+    }
+
     private func dispatchCalendarQuery(arguments: [String: Any], result: @escaping FlutterResult) {
-        let formatter = ISO8601DateFormatter()
-        let startDate = (arguments["startDate"] as? String).flatMap { formatter.date(from: $0) } ?? Date()
-        let endDate = (arguments["endDate"] as? String).flatMap { formatter.date(from: $0) }
-            ?? startDate.addingTimeInterval(86400)
+        let startDate = (arguments["startDate"] as? String).flatMap { self.parseFlexibleISODate($0) } ?? Date()
+        let endDateRaw = (arguments["endDate"] as? String).flatMap { self.parseFlexibleISODate($0) }
+        // If the caller passed start == end (single-day query) or no end at
+        // all, push the end to end-of-day so the EKEventStore predicate isn't
+        // a zero-width range that matches nothing.
+        let endDate: Date = {
+            if let e = endDateRaw, e > startDate { return e }
+            let cal = Calendar.current
+            let endOfStart = cal.date(bySettingHour: 23, minute: 59, second: 59, of: startDate)
+            return endOfStart ?? startDate.addingTimeInterval(86400)
+        }()
 
         let requestCalendarAccess: (@escaping (Bool) -> Void) -> Void = { completion in
             let status = EKEventStore.authorizationStatus(for: .event)

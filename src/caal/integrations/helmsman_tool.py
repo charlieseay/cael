@@ -1108,15 +1108,24 @@ end tell
             Voice-readable summary of upcoming events.
         """
         logger.info(f"get_calendar_events: next {days_ahead} days")
+        # Iterate over every calendar — hardcoding `calendar "Calendar"` blew
+        # up on hosts whose default calendar is named anything else (iCloud,
+        # Home, Work…) with `Can't get calendar "Calendar"`, which is what the
+        # user heard as "format error". `evtSummary` avoids shadowing the
+        # `summary` property accessor.
         applescript = f"""
 set eventList to ""
 set now to current date
 set endDate to (now + {days_ahead} * days)
 tell application "Calendar"
-    repeat with evt in events of calendar "Calendar" whose start date is greater than or equal to now and whose start date is less than or equal to endDate
-        set summary to summary of evt
-        set startTime to start date of evt
-        set eventList to eventList & summary & " at " & (time string of startTime) & "; "
+    repeat with cal in calendars
+        try
+            repeat with evt in (events of cal whose start date is greater than or equal to now and start date is less than or equal to endDate)
+                set evtSummary to summary of evt
+                set startTime to start date of evt
+                set eventList to eventList & evtSummary & " at " & (time string of startTime) & "; "
+            end repeat
+        end try
     end repeat
 end tell
 eventList

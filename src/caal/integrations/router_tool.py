@@ -5,6 +5,18 @@ Provides deterministic wrappers for Quarterdeck's routing APIs so the model can:
 - inspect weekly routing metrics
 - run the `/router memory` command bridge
 - explain routing decisions for a task
+
+HTTP contract (base URL = ``settings.quarterdeck_router_url``, env ``QUARTERDECK_ROUTER_URL``,
+or ``http://localhost:5681``):
+
+- ``POST {base}/route`` — JSON body ``task_description`` (required), optional
+  ``task_type_hint`` (mapped from tool ``context``), plus ``explain`` / ``source`` for
+  explanations. Quarterdeck responds with fields such as ``recommended_model``,
+  ``routing_class``, ``confidence``.
+- ``GET {base}/route/metrics`` — weekly routing statistics JSON.
+- Router KB / "memory" — ``GET {base}/route/memory`` first; if that returns 404/405,
+  ``POST {base}/router`` with ``{"command": "memory", "query": "<optional>"}``; if that
+  also 404/405, ``GET {base}/router/memory`` with optional ``query`` param.
 """
 
 from __future__ import annotations
@@ -38,11 +50,13 @@ ROUTE_TASK_TOOL_DEF: dict[str, Any] = {
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Task text to route.",
+                    "description": "Task text; sent to Quarterdeck as task_description.",
                 },
                 "context": {
                     "type": "string",
-                    "description": "Optional extra context to improve routing.",
+                    "description": (
+                        "Optional routing hint; sent to Quarterdeck as task_type_hint."
+                    ),
                 },
             },
             "required": ["task"],
@@ -68,8 +82,8 @@ ROUTER_MEMORY_TOOL_DEF: dict[str, Any] = {
     "function": {
         "name": "router_memory",
         "description": (
-            "Run the Quarterdeck `/router memory` command bridge to inspect "
-            "router KB memory state."
+            "Inspect Quarterdeck router KB memory: tries GET /route/memory, then "
+            "POST /router (command bridge), then GET /router/memory."
         ),
         "parameters": {
             "type": "object",
@@ -99,7 +113,7 @@ EXPLAIN_ROUTE_DECISION_TOOL_DEF: dict[str, Any] = {
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Task text to explain routing for.",
+                    "description": "Task text; sent as task_description to /route.",
                 }
             },
             "required": ["task"],
@@ -139,12 +153,13 @@ async def execute_route_task(task: str, context: str = "") -> str:
         return "Task is required."
 
     base = _router_base_url()
-    payload: dict[str, Any] = {"task": task.strip()}
+    payload: dict[str, Any] = {"task_description": task.strip()}
     if context.strip():
-        payload["context"] = context.strip()
+        payload["task_type_hint"] = context.strip()
 
     try:
         async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
+            # POST /route — Quarterdeck classifier (task_description + optional task_type_hint)
             data = await _post_json(client, f"{base}/route", payload)
         return _safe_json(data)
     except Exception as e:
@@ -156,6 +171,7 @@ async def execute_route_metrics() -> str:
     base = _router_base_url()
     try:
         async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
+            # GET /route/metrics — weekly routing stats
             resp = await client.get(f"{base}/route/metrics")
             resp.raise_for_status()
             data = resp.json() if resp.content else {"ok": True}
@@ -167,13 +183,20 @@ async def execute_route_metrics() -> str:
 
 async def execute_router_memory(query: str = "") -> str:
     base = _router_base_url()
-    query = query.strip()
+    q = query.strip()
+    params = {"query": q} if q else None
     try:
         async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
-            # Primary bridge: command endpoint.
+            # GET /route/memory — preferred when Quarterdeck exposes KB over HTTP
+            r = await client.get(f"{base}/route/memory", params=params)
+            if r.status_code not in (404, 405):
+                r.raise_for_status()
+                data = r.json() if r.content else {"ok": True}
+                return _safe_json(data)
+
             payload: dict[str, Any] = {"command": "memory"}
-            if query:
-                payload["query"] = query
+            if q:
+                payload["query"] = q
             try:
                 data = await _post_json(client, f"{base}/router", payload)
                 return _safe_json(data)
@@ -181,13 +204,9 @@ async def execute_router_memory(query: str = "") -> str:
                 if err.response.status_code not in (404, 405):
                     raise
 
-            # Fallback: explicit endpoint if the service exposes /router/memory.
-            resp = await client.get(
-                f"{base}/router/memory",
-                params={"query": query} if query else None,
-            )
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {"ok": True}
+            r2 = await client.get(f"{base}/router/memory", params=params)
+            r2.raise_for_status()
+            data = r2.json() if r2.content else {"ok": True}
             return _safe_json(data)
     except Exception as e:
         logger.warning("router_memory failed: %s", e)
@@ -200,13 +219,14 @@ async def execute_explain_route_decision(task: str) -> str:
 
     base = _router_base_url()
     payload = {
-        "task": task.strip(),
+        "task_description": task.strip(),
         "explain": True,
         "source": "soniquebar",
     }
 
     try:
         async with httpx.AsyncClient(timeout=_ROUTER_TIMEOUT_S) as client:
+            # POST /route — same classifier as route_task, with explain hint for SoniqueBar
             data = await _post_json(client, f"{base}/route", payload)
     except Exception as e:
         logger.warning("explain_route_decision failed: %s", e)
@@ -216,7 +236,12 @@ async def execute_explain_route_decision(task: str) -> str:
     if isinstance(data, dict):
         if any(k in data for k in ("explanation", "reason", "rationale", "why")):
             return _safe_json(data)
-        recommendation = data.get("recommendation") or data.get("route") or "unknown"
+        recommendation = (
+            data.get("recommended_model")
+            or data.get("recommendation")
+            or data.get("route")
+            or "unknown"
+        )
         confidence = data.get("confidence")
         explanation = (
             f"Quarterdeck recommended '{recommendation}'"

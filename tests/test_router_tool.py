@@ -52,9 +52,9 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, scripted: list[_StubResponse]
 
 
 @pytest.mark.asyncio
-async def test_execute_route_task_posts_to_route(monkeypatch: pytest.MonkeyPatch):
+async def test_execute_route_task_posts_task_description_to_route(monkeypatch: pytest.MonkeyPatch):
     calls: list[tuple] = []
-    scripted = [_StubResponse(200, {"route": "haiku"})]
+    scripted = [_StubResponse(200, {"recommended_model": "haiku"})]
     monkeypatch.setattr(router_tool, "_router_base_url", lambda: "http://localhost:5681")
     _patch_client(monkeypatch, scripted, calls)
 
@@ -64,10 +64,13 @@ async def test_execute_route_task_posts_to_route(monkeypatch: pytest.MonkeyPatch
         (
             "POST",
             "http://localhost:5681/route",
-            {"task": "summarize logs", "context": "short context"},
+            {
+                "task_description": "summarize logs",
+                "task_type_hint": "short context",
+            },
         )
     ]
-    assert '"route": "haiku"' in out
+    assert '"recommended_model": "haiku"' in out
 
 
 @pytest.mark.asyncio
@@ -84,16 +87,35 @@ async def test_execute_route_metrics_gets_metrics_endpoint(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_execute_router_memory_uses_router_command_bridge(monkeypatch: pytest.MonkeyPatch):
+async def test_execute_router_memory_prefers_route_memory(monkeypatch: pytest.MonkeyPatch):
     calls: list[tuple] = []
-    scripted = [_StubResponse(200, {"ok": True, "source": "router-command"})]
+    scripted = [_StubResponse(200, {"entries": 3, "source": "route-memory"})]
+    monkeypatch.setattr(router_tool, "_router_base_url", lambda: "http://localhost:5681")
+    _patch_client(monkeypatch, scripted, calls)
+
+    out = await router_tool.execute_router_memory("kb")
+
+    assert calls == [("GET", "http://localhost:5681/route/memory", {"query": "kb"})]
+    assert '"source": "route-memory"' in out
+
+
+@pytest.mark.asyncio
+async def test_execute_router_memory_uses_post_router_when_route_memory_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[tuple] = []
+    scripted = [
+        _StubResponse(404, {"error": "not found"}),
+        _StubResponse(200, {"ok": True, "source": "router-command"}),
+    ]
     monkeypatch.setattr(router_tool, "_router_base_url", lambda: "http://localhost:5681")
     _patch_client(monkeypatch, scripted, calls)
 
     out = await router_tool.execute_router_memory("soniquebar")
 
     assert calls == [
-        ("POST", "http://localhost:5681/router", {"command": "memory", "query": "soniquebar"})
+        ("GET", "http://localhost:5681/route/memory", {"query": "soniquebar"}),
+        ("POST", "http://localhost:5681/router", {"command": "memory", "query": "soniquebar"}),
     ]
     assert '"source": "router-command"' in out
 
@@ -105,6 +127,7 @@ async def test_execute_router_memory_falls_back_to_router_memory_endpoint(
     calls: list[tuple] = []
     scripted = [
         _StubResponse(404, {"error": "not found"}),
+        _StubResponse(404, {"error": "not found"}),
         _StubResponse(200, {"items": 4}),
     ]
     monkeypatch.setattr(router_tool, "_router_base_url", lambda: "http://localhost:5681")
@@ -113,6 +136,7 @@ async def test_execute_router_memory_falls_back_to_router_memory_endpoint(
     out = await router_tool.execute_router_memory("history")
 
     assert calls == [
+        ("GET", "http://localhost:5681/route/memory", {"query": "history"}),
         ("POST", "http://localhost:5681/router", {"command": "memory", "query": "history"}),
         ("GET", "http://localhost:5681/router/memory", {"query": "history"}),
     ]
@@ -120,11 +144,11 @@ async def test_execute_router_memory_falls_back_to_router_memory_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_execute_explain_route_decision_uses_route_with_explain_hint(
+async def test_execute_explain_route_decision_posts_task_description_with_explain(
     monkeypatch: pytest.MonkeyPatch,
 ):
     calls: list[tuple] = []
-    scripted = [_StubResponse(200, {"recommendation": "haiku", "confidence": 0.82})]
+    scripted = [_StubResponse(200, {"recommended_model": "haiku", "confidence": 0.82})]
     monkeypatch.setattr(router_tool, "_router_base_url", lambda: "http://localhost:5681")
     _patch_client(monkeypatch, scripted, calls)
 
@@ -134,7 +158,11 @@ async def test_execute_explain_route_decision_uses_route_with_explain_hint(
         (
             "POST",
             "http://localhost:5681/route",
-            {"task": "review this PR", "explain": True, "source": "soniquebar"},
+            {
+                "task_description": "review this PR",
+                "explain": True,
+                "source": "soniquebar",
+            },
         )
     ]
     assert "Quarterdeck recommended 'haiku'" in out

@@ -388,7 +388,11 @@ ToolStatusCallback = callable  # async (bool, list[str], list[dict]) -> None
 
 
 class VoiceAssistant(LightRAGTools, MCPHubTools, RouterTools, HelmsmanTools, MacControlTools, NetworkTools, MemoryTools, PersonaMemoryTools, ShellTools, FilesystemTools, ClipboardTools, VisionTools, WebSearchTools, iOSBridgeTools, Agent):
-    """Voice assistant with MCP tools, web search, and short-term memory."""
+    """Voice assistant with MCP tools, web search, and short-term memory.
+
+    RouterTools calls Quarterdeck at ``quarterdeck_router_url`` in settings (not the
+    in-process LLM tier router_* keys).
+    """
 
     def __init__(
         self,

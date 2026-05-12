@@ -145,7 +145,7 @@ DEFAULT_SETTINGS = {
     "router_medium_model": "meta/llama-3.1-70b-instruct",
     "router_complex_provider": "claude_cli",
     "router_complex_model": "claude-haiku-4-5",
-    # Quarterdeck smart router endpoint
+    # Quarterdeck smart-router HTTP base (see router_tool); not the same as router_*_model tiers.
     "quarterdeck_router_url": "http://localhost:5681",
     # Assistant identity
     "assistant_avatar_filename": "",      # filename under AVATAR_DIR, empty = not set
